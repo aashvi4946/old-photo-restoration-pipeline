@@ -255,3 +255,62 @@ def test_viewer_is_not_authoritative_state(tmp_path):
 
     window.close()
     app.quit()
+
+
+def test_analysis_is_updated_when_image_is_loaded(tmp_path):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    image = np.zeros((100, 100), dtype=np.uint8)
+    path = tmp_path / "analysis.png"
+    assert cv2.imwrite(str(path), image)
+
+    window.image_state.load_image(path)
+    window._refresh_analysis()
+
+    assert window.image_profile is not None
+    assert window.image_profile.width == 100
+    assert window.image_profile.height == 100
+    assert window.image_profile.channels == 1
+    assert window.image_profile.is_grayscale is True
+
+    assert "100" in window.analysis_panel.metadata_label.text()
+    assert "Blur:" in window.analysis_panel.blur_label.text()
+    assert "Noise:" in window.analysis_panel.noise_label.text()
+
+    window.close()
+    app.quit()
+
+
+def test_analysis_refreshes_after_undo_redo_and_reset():
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    original = np.zeros((100, 100), dtype=np.uint8)
+    window.image_state.set_image(original)
+    window._refresh_analysis()
+
+    assert window.image_profile.brightness == 0.0
+
+    changed = np.full((100, 100), 200, dtype=np.uint8)
+    window.image_state.apply_change(changed)
+
+    window._refresh_analysis()
+
+    assert window.image_profile.brightness == 200.0
+
+    window.undo()
+    window._refresh_analysis()
+
+    assert window.image_profile.brightness == 0.0
+
+    window.redo()
+    assert window.image_profile.brightness == 200.0
+
+    window.reset()
+    assert window.image_profile.brightness == 0.0
+
+    window.close()
+    app.quit()

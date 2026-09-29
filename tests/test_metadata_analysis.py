@@ -38,3 +38,15 @@ def test_invalid_dimensions_raise_error():
 
     with pytest.raises(ValueError):
         analyze_metadata(image)
+
+
+def test_unsupported_channel_count_raises_error():
+    image = np.zeros((10, 10, 2), dtype=np.uint8)
+
+    with pytest.raises(ValueError):
+        analyze_metadata(image)
+
+
+def test_none_image_raises_error():
+    with pytest.raises(ValueError):
+        analyze_metadata(None)

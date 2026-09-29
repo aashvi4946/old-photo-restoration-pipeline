@@ -2,9 +2,12 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QFileDialog,
     QMessageBox,
+    QWidget,
+    QHBoxLayout,
 )
-
 from core.image_state import ImageState
+from processing.analysis.analyze import analyze_image
+from models.image_profile import ImageProfile
 from ui.toolbar import AppToolbar
 from ui.image_viewer import ImageViewer
 from ui.analysis_panel import AnalysisPanel
@@ -18,6 +21,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.image_state = ImageState()
+        self.image_profile: ImageProfile | None = None
 
         self._setup_ui()
         self._connect_actions()
@@ -30,8 +34,15 @@ class MainWindow(QMainWindow):
         self.image_viewer = ImageViewer()
         self.analysis_panel = AnalysisPanel()
 
-        self.setCentralWidget(self.image_viewer)
+        central_widget = QWidget()
+        layout = QHBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
 
+        layout.addWidget(self.image_viewer, 1)
+        layout.addWidget(self.analysis_panel, 0)
+
+        self.setCentralWidget(central_widget)
+        
     def _connect_actions(self):
         self.toolbar.open_action.triggered.connect(self.open_image)
         self.toolbar.undo_action.triggered.connect(self.undo)
@@ -62,6 +73,7 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
 
@@ -74,6 +86,7 @@ class MainWindow(QMainWindow):
         if not self.image_state.undo():
             return
 
+        self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
 
@@ -81,6 +94,7 @@ class MainWindow(QMainWindow):
         if not self.image_state.redo():
             return
 
+        self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
 
@@ -88,8 +102,22 @@ class MainWindow(QMainWindow):
         if not self.image_state.reset():
             return
 
+        self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
+
+    def _refresh_analysis(self):
+        if not self.image_state.has_image:
+            self.image_profile = None
+            self.analysis_panel.clear()
+            return
+
+        self.image_profile = analyze_image(
+            self.image_state.current_image
+        )
+        self.analysis_panel.update_profile(
+            self.image_profile
+        )
 
     def _refresh_viewer(self):
         if self.image_state.has_image:

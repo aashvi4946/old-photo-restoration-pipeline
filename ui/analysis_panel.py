@@ -20,6 +20,7 @@ class AnalysisPanel(QWidget):
         self.contrast_label = QLabel()
         self.color_cast_label = QLabel()
 
+        layout.addWidget(title)
         for label in (
             self.metadata_label,
             self.blur_label,
@@ -31,7 +32,7 @@ class AnalysisPanel(QWidget):
             label.setWordWrap(True)
             layout.addWidget(label)
 
-        layout.addWidget(title)
+        # layout.addWidget(title)
         layout.addStretch()
 
         self.clear()
