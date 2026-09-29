@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+*.spec
+
+# Project output
+output/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Python package metadata
+*.egg-info/
