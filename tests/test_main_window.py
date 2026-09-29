@@ -1,0 +1,257 @@
+import os
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+import cv2
+import numpy as np
+from PySide6.QtWidgets import QApplication
+
+from ui.main_window import MainWindow
+
+
+def test_initial_action_states():
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    assert window.toolbar.open_action.isEnabled()
+    assert not window.toolbar.save_action.isEnabled()
+    assert not window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+    assert not window.toolbar.reset_action.isEnabled()
+
+    window.close()
+    app.quit()
+
+
+def test_action_states_after_loading_image(tmp_path):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    image = np.full((100, 100), 128, dtype=np.uint8)
+    path = tmp_path / "test.png"
+    assert cv2.imwrite(str(path), image)
+
+    window.image_state.load_image(path)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    assert window.image_state.has_image
+    assert not window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+    assert window.toolbar.reset_action.isEnabled()
+    assert not window.image_viewer.image_label.pixmap().isNull()
+
+    window.close()
+    app.quit()
+
+
+def test_action_states_follow_undo_redo(tmp_path):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    image = np.zeros((100, 100), dtype=np.uint8)
+    path = tmp_path / "test.png"
+    assert cv2.imwrite(str(path), image)
+
+    window.image_state.load_image(path)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    changed = np.full((100, 100), 255, dtype=np.uint8)
+    window.image_state.apply_change(changed)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    assert window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+
+    window.undo()
+
+    assert not window.toolbar.undo_action.isEnabled()
+    assert window.toolbar.redo_action.isEnabled()
+
+    window.redo()
+
+    assert window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+
+    window.close()
+    app.quit()
+
+
+def test_reset_synchronizes_viewer_and_actions(tmp_path):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    image = np.full((100, 100), 50, dtype=np.uint8)
+    path = tmp_path / "test.png"
+    assert cv2.imwrite(str(path), image)
+
+    window.image_state.load_image(path)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    changed = np.full((100, 100), 200, dtype=np.uint8)
+    window.image_state.apply_change(changed)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window.reset()
+
+    assert np.array_equal(
+        window.image_state.current_image,
+        window.image_state.original_image,
+    )
+
+    # Reset creates an undo point for the pre-reset state.
+    assert window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+    assert window.toolbar.reset_action.isEnabled()
+    assert not window.image_viewer.image_label.pixmap().isNull()
+
+    window.close()
+    app.quit()
+
+
+def test_opening_new_image_replaces_previous_ui_state(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    first = np.zeros((100, 100), dtype=np.uint8)
+    first_path = tmp_path / "first.png"
+    assert cv2.imwrite(str(first_path), first)
+
+    second = np.full((100, 100), 255, dtype=np.uint8)
+    second_path = tmp_path / "second.png"
+    assert cv2.imwrite(str(second_path), second)
+
+    monkeypatch.setattr(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(first_path), "Image Files"),
+    )
+
+    window.open_image()
+
+    changed = np.full((100, 100), 100, dtype=np.uint8)
+    window.image_state.apply_change(changed)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    assert window.toolbar.undo_action.isEnabled()
+
+    monkeypatch.setattr(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(second_path), "Image Files"),
+    )
+
+    window.open_image()
+
+    assert np.array_equal(
+        window.image_state.original_image,
+        second,
+    )
+    assert np.array_equal(
+        window.image_state.current_image,
+        second,
+    )
+
+    assert not window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+    assert window.toolbar.reset_action.isEnabled()
+
+    window.close()
+    app.quit()
+
+
+def test_failed_open_preserves_existing_ui_state(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    valid_image = np.full((100, 100), 50, dtype=np.uint8)
+    valid_path = tmp_path / "valid.png"
+    assert cv2.imwrite(str(valid_path), valid_image)
+
+    invalid_path = tmp_path / "invalid.png"
+    invalid_path.write_text("not a valid image")
+
+    monkeypatch.setattr(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(valid_path), "Image Files"),
+    )
+
+    window.open_image()
+
+    changed = np.full((100, 100), 150, dtype=np.uint8)
+    window.image_state.apply_change(changed)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    original_before = window.image_state.original_image.copy()
+    current_before = window.image_state.current_image.copy()
+
+    monkeypatch.setattr(
+        "ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(invalid_path), "Image Files"),
+    )
+
+    messages = []
+
+    monkeypatch.setattr(
+        "ui.main_window.QMessageBox.warning",
+        lambda *args, **kwargs: messages.append(args),
+    )
+
+    window.open_image()
+
+    assert len(messages) == 1
+
+    assert np.array_equal(
+        window.image_state.original_image,
+        original_before,
+    )
+    assert np.array_equal(
+        window.image_state.current_image,
+        current_before,
+    )
+
+    assert window.toolbar.undo_action.isEnabled()
+    assert not window.toolbar.redo_action.isEnabled()
+    assert window.toolbar.reset_action.isEnabled()
+    assert not window.image_viewer.image_label.pixmap().isNull()
+
+    window.close()
+    app.quit()
+
+
+def test_viewer_is_not_authoritative_state(tmp_path):
+    app = QApplication.instance() or QApplication([])
+
+    window = MainWindow()
+
+    image = np.full((100, 100), 80, dtype=np.uint8)
+    path = tmp_path / "test.png"
+    assert cv2.imwrite(str(path), image)
+
+    window.image_state.load_image(path)
+    window._refresh_viewer()
+    window._update_action_states()
+
+    state_before = window.image_state.current_image.copy()
+
+    window.image_viewer.clear()
+
+    assert np.array_equal(
+        window.image_state.current_image,
+        state_before,
+    )
+    assert window.image_state.has_image is True
+    assert window.toolbar.reset_action.isEnabled()
+
+    window.close()
+    app.quit()

@@ -1,0 +1,20 @@
+import cv2
+import numpy as np
+
+
+def calculate_histogram(image: np.ndarray) -> np.ndarray:
+    """Calculate a 256-bin grayscale intensity histogram."""
+
+    if image is None or image.size == 0:
+        raise ValueError("Image cannot be empty.")
+
+    if image.ndim == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    elif image.ndim == 2:
+        gray = image
+    else:
+        raise ValueError("Unsupported image dimensions.")
+
+    histogram = cv2.calcHist([gray], [0], None, [256], [0, 256])
+
+    return histogram.flatten()
