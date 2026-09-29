@@ -46,6 +46,14 @@ def test_color_image_is_supported():
     assert histogram.shape == (256,)
 
 
+def test_bgra_image_is_supported():
+    image = np.full((100, 100, 4), (128, 128, 128, 20), dtype=np.uint8)
+
+    histogram = calculate_histogram(image)
+
+    assert histogram.shape == (256,)
+
+
 def test_empty_image_raises_error():
     image = np.array([])
 

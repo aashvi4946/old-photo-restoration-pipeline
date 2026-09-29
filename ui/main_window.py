@@ -1,3 +1,5 @@
+import cv2
+
 from PySide6.QtWidgets import (
     QMainWindow,
     QFileDialog,
@@ -7,10 +9,16 @@ from PySide6.QtWidgets import (
 )
 from core.image_state import ImageState
 from processing.analysis.analyze import analyze_image
+from processing.preprocessing.clahe import apply_clahe
+from processing.preprocessing.histogram import equalize_histogram
+from processing.preprocessing.normalization import normalize_image
+from processing.preprocessing.resize import resize_image
+from processing.preprocessing.white_balance import auto_white_balance
 from models.image_profile import ImageProfile
 from ui.toolbar import AppToolbar
 from ui.image_viewer import ImageViewer
 from ui.analysis_panel import AnalysisPanel
+from ui.prepare_panel import PreparePanel
 
 
 class MainWindow(QMainWindow):
@@ -33,11 +41,13 @@ class MainWindow(QMainWindow):
 
         self.image_viewer = ImageViewer()
         self.analysis_panel = AnalysisPanel()
+        self.prepare_panel = PreparePanel()
 
         central_widget = QWidget()
         layout = QHBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        layout.addWidget(self.prepare_panel, 0)
         layout.addWidget(self.image_viewer, 1)
         layout.addWidget(self.analysis_panel, 0)
 
@@ -48,6 +58,7 @@ class MainWindow(QMainWindow):
         self.toolbar.undo_action.triggered.connect(self.undo)
         self.toolbar.redo_action.triggered.connect(self.redo)
         self.toolbar.reset_action.triggered.connect(self.reset)
+        self.prepare_panel.operation_requested.connect(self._apply_preprocessing)
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -106,6 +117,44 @@ class MainWindow(QMainWindow):
         self._refresh_viewer()
         self._update_action_states()
 
+    def _apply_preprocessing(
+        self,
+        operation: str,
+        parameters: dict[str, object],
+    ) -> None:
+        """Process the full-resolution current image as one undoable action."""
+
+        if not self.image_state.has_image:
+            return
+
+        operations = {
+            "histogram": ("Histogram Equalization", equalize_histogram),
+            "clahe": ("CLAHE", apply_clahe),
+            "white_balance": ("Auto White Balance", auto_white_balance),
+            "normalize": ("Normalize", normalize_image),
+            "resize": ("Resize", resize_image),
+        }
+
+        try:
+            label, processor = operations[operation]
+            result = processor(self.image_state.current_image, **parameters)
+            self.image_state.apply_change(result)
+        except KeyError:
+            QMessageBox.warning(
+                self,
+                "Processing Failed",
+                f"Unknown preprocessing operation: {operation}",
+            )
+            return
+        except (TypeError, ValueError, cv2.error) as error:
+            QMessageBox.warning(self, "Processing Failed", str(error))
+            return
+
+        self._refresh_analysis()
+        self._refresh_viewer()
+        self._update_action_states()
+        self.statusBar().showMessage(f"Applied: {label}", 5000)
+
     def _refresh_analysis(self):
         if not self.image_state.has_image:
             self.image_profile = None
@@ -139,3 +188,8 @@ class MainWindow(QMainWindow):
             self.image_state.can_redo
         )
         self.toolbar.reset_action.setEnabled(has_image)
+        if has_image:
+            height, width = self.image_state.current_image.shape[:2]
+            self.prepare_panel.set_image_dimensions((width, height))
+        else:
+            self.prepare_panel.set_image_dimensions(None)

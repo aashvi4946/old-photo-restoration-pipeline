@@ -9,7 +9,12 @@ def calculate_contrast(image: np.ndarray) -> float:
         raise ValueError("Image cannot be empty.")
 
     if image.ndim == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        if image.shape[2] == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        elif image.shape[2] == 4:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
+        else:
+            raise ValueError("Unsupported channel count.")
     elif image.ndim == 2:
         gray = image
     else:

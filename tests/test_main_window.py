@@ -314,3 +314,72 @@ def test_analysis_refreshes_after_undo_redo_and_reset():
 
     window.close()
     app.quit()
+
+
+def test_preprocessing_operation_commits_to_state_and_refreshes_ui():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.tile(np.arange(100, 111, dtype=np.uint8), (20, 1))
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_preprocessing("histogram", {})
+
+    assert not np.array_equal(window.image_state.current_image, image)
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    assert window.toolbar.undo_action.isEnabled()
+    assert window.image_profile.brightness != float(image.mean())
+
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+    window.redo()
+    assert not np.array_equal(window.image_state.current_image, image)
+
+    window.close()
+    app.quit()
+
+
+def test_failed_preprocessing_preserves_current_image_and_history(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((20, 20), 100, dtype=np.uint8)
+    window.image_state.set_image(image)
+    current_before = window.image_state.current_image.copy()
+    warnings = []
+    monkeypatch.setattr(
+        "ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    window._apply_preprocessing("clahe", {"clip_limit": 0})
+
+    assert np.array_equal(window.image_state.current_image, current_before)
+    assert not window.image_state.can_undo
+    assert len(warnings) == 1
+
+    window.close()
+    app.quit()
+
+
+def test_resize_preprocessing_updates_analysis_and_prepare_dimensions():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((100, 80, 4), (50, 80, 120, 200), dtype=np.uint8)
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_preprocessing("resize", {"width": 40, "height": 50})
+
+    assert window.image_state.current_image.shape == (50, 40, 4)
+    assert window.image_profile.width == 40
+    assert window.image_profile.height == 50
+    assert window.prepare_panel._image_dimensions == (40, 50)
+    assert np.all(window.image_state.current_image[:, :, 3] == 200)
+
+    window.close()
+    app.quit()

@@ -30,6 +30,12 @@ def test_color_image_is_supported():
     assert isinstance(score, float)
 
 
+def test_bgra_image_is_supported():
+    image = np.full((100, 100, 4), (128, 128, 128, 20), dtype=np.uint8)
+
+    assert calculate_brightness(image) == pytest.approx(128.0)
+
+
 def test_empty_image_raises_error():
     image = np.array([])
 
