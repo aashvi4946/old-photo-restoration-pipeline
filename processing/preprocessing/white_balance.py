@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from processing.preprocessing._image_utils import (
+from processing._image_utils import (
     restore_alpha,
     split_alpha,
     validate_uint8_image,

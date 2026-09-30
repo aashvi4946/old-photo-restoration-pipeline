@@ -383,3 +383,49 @@ def test_resize_preprocessing_updates_analysis_and_prepare_dimensions():
 
     window.close()
     app.quit()
+
+
+def test_denoising_operation_commits_to_state_and_refreshes_ui():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.zeros((9, 9), dtype=np.uint8)
+    image[4, 4] = 255
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_denoising("median", {"kernel_size": 3})
+
+    assert window.image_state.current_image[4, 4] == 0
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    assert window.toolbar.undo_action.isEnabled()
+
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+
+    window.close()
+    app.quit()
+
+
+def test_failed_denoising_preserves_current_image_and_history(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.zeros((9, 9), dtype=np.uint8)
+    window.image_state.set_image(image)
+    current_before = window.image_state.current_image.copy()
+    warnings = []
+    monkeypatch.setattr(
+        "ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    window._apply_denoising("gaussian", {"kernel_size": 2})
+
+    assert np.array_equal(window.image_state.current_image, current_before)
+    assert not window.image_state.can_undo
+    assert len(warnings) == 1
+
+    window.close()
+    app.quit()

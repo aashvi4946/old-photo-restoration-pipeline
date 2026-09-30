@@ -1,4 +1,4 @@
-"""Shared image validation and alpha-channel helpers for preprocessing."""
+"""Shared image validation and alpha helpers for processing operations."""
 
 from __future__ import annotations
 

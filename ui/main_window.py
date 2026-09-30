@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
 )
 from core.image_state import ImageState
 from processing.analysis.analyze import analyze_image
@@ -14,11 +15,18 @@ from processing.preprocessing.histogram import equalize_histogram
 from processing.preprocessing.normalization import normalize_image
 from processing.preprocessing.resize import resize_image
 from processing.preprocessing.white_balance import auto_white_balance
+from processing.restoration.denoise import (
+    apply_bilateral_denoise,
+    apply_gaussian_denoise,
+    apply_median_denoise,
+    apply_non_local_means_denoise,
+)
 from models.image_profile import ImageProfile
 from ui.toolbar import AppToolbar
 from ui.image_viewer import ImageViewer
 from ui.analysis_panel import AnalysisPanel
 from ui.prepare_panel import PreparePanel
+from ui.denoise_panel import DenoisePanel
 
 
 class MainWindow(QMainWindow):
@@ -42,12 +50,19 @@ class MainWindow(QMainWindow):
         self.image_viewer = ImageViewer()
         self.analysis_panel = AnalysisPanel()
         self.prepare_panel = PreparePanel()
+        self.denoise_panel = DenoisePanel()
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self.prepare_panel)
+        left_layout.addWidget(self.denoise_panel)
 
         central_widget = QWidget()
         layout = QHBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.addWidget(self.prepare_panel, 0)
+        layout.addWidget(left_panel, 0)
         layout.addWidget(self.image_viewer, 1)
         layout.addWidget(self.analysis_panel, 0)
 
@@ -59,6 +74,7 @@ class MainWindow(QMainWindow):
         self.toolbar.redo_action.triggered.connect(self.redo)
         self.toolbar.reset_action.triggered.connect(self.reset)
         self.prepare_panel.operation_requested.connect(self._apply_preprocessing)
+        self.denoise_panel.operation_requested.connect(self._apply_denoising)
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -124,9 +140,6 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Process the full-resolution current image as one undoable action."""
 
-        if not self.image_state.has_image:
-            return
-
         operations = {
             "histogram": ("Histogram Equalization", equalize_histogram),
             "clahe": ("CLAHE", apply_clahe),
@@ -134,6 +147,37 @@ class MainWindow(QMainWindow):
             "normalize": ("Normalize", normalize_image),
             "resize": ("Resize", resize_image),
         }
+
+        self._apply_operation(operation, parameters, operations)
+
+    def _apply_denoising(
+        self,
+        operation: str,
+        parameters: dict[str, object],
+    ) -> None:
+        """Apply an explicit denoising operation as one undoable action."""
+
+        operations = {
+            "gaussian": ("Gaussian Denoise", apply_gaussian_denoise),
+            "median": ("Median Denoise", apply_median_denoise),
+            "bilateral": ("Bilateral Denoise", apply_bilateral_denoise),
+            "non_local_means": (
+                "Non-Local Means Denoise",
+                apply_non_local_means_denoise,
+            ),
+        }
+        self._apply_operation(operation, parameters, operations)
+
+    def _apply_operation(
+        self,
+        operation: str,
+        parameters: dict[str, object],
+        operations: dict[str, tuple[str, object]],
+    ) -> None:
+        """Apply a processing function and refresh UI only after success."""
+
+        if not self.image_state.has_image:
+            return
 
         try:
             label, processor = operations[operation]
@@ -143,7 +187,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Processing Failed",
-                f"Unknown preprocessing operation: {operation}",
+                f"Unknown processing operation: {operation}",
             )
             return
         except (TypeError, ValueError, cv2.error) as error:
@@ -188,6 +232,7 @@ class MainWindow(QMainWindow):
             self.image_state.can_redo
         )
         self.toolbar.reset_action.setEnabled(has_image)
+        self.denoise_panel.set_image_available(has_image)
         if has_image:
             height, width = self.image_state.current_image.shape[:2]
             self.prepare_panel.set_image_dimensions((width, height))

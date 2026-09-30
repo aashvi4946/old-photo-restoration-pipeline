@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from processing.preprocessing._image_utils import validate_uint8_image
+from processing._image_utils import validate_uint8_image
 
 
 _VALID_INTERPOLATIONS = frozenset(range(cv2.INTER_MAX))
