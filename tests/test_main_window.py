@@ -429,3 +429,80 @@ def test_failed_denoising_preserves_current_image_and_history(monkeypatch):
 
     window.close()
     app.quit()
+
+
+def test_deblurring_operation_commits_to_state_and_refreshes_ui():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.zeros((9, 9), dtype=np.uint8)
+    image[4, 4] = 160
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_deblurring(
+        "unsharp",
+        {"radius": 1.0, "amount": 0.5, "threshold": 0},
+    )
+
+    assert window.image_state.current_image[4, 4] > image[4, 4]
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    assert window.toolbar.undo_action.isEnabled()
+
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+
+    window.close()
+    app.quit()
+
+
+def test_wiener_deblurring_creates_psf_and_commits_to_state():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.zeros((16, 16), dtype=np.uint8)
+    image[6:10, 6:10] = 180
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_deblurring(
+        "wiener",
+        {"psf_length": 3, "psf_angle": 0.0, "balance": 0.1},
+    )
+
+    assert window.image_state.current_image.shape == image.shape
+    assert window.image_state.can_undo
+
+    window.close()
+    app.quit()
+
+
+def test_photo_repair_commits_inpainting_and_clears_mask():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((20, 20), 200, dtype=np.uint8)
+    image[10, 10] = 0
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._begin_repair_stroke((10, 10))
+    window._extend_repair_stroke((10, 10), (10, 10))
+    window._end_repair_stroke()
+
+    assert window.repair_mask_state.has_damage
+    assert window.repair_panel.apply_button.isEnabled()
+
+    window._apply_repair("telea", 3.0)
+
+    assert window.image_state.current_image[10, 10] > image[10, 10]
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    assert not window.repair_mask_state.has_damage
+
+    window.close()
+    app.quit()
