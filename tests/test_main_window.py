@@ -506,3 +506,100 @@ def test_photo_repair_commits_inpainting_and_clears_mask():
 
     window.close()
     app.quit()
+
+
+def test_finishing_operation_commits_to_state_and_refreshes_ui():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((20, 20, 3), (50, 100, 150), dtype=np.uint8)
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_finishing("brightness", {"value": 25})
+
+    assert np.array_equal(
+        window.image_state.current_image[0, 0], np.array([75, 125, 175])
+    )
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    assert window.toolbar.undo_action.isEnabled()
+
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+
+    window.close()
+    app.quit()
+
+
+def test_failed_finishing_preserves_current_image_and_history(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.zeros((9, 9), dtype=np.uint8)
+    window.image_state.set_image(image)
+    current_before = window.image_state.current_image.copy()
+    warnings = []
+    monkeypatch.setattr(
+        "ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    window._apply_finishing("gamma", {"gamma": 0})
+
+    assert np.array_equal(window.image_state.current_image, current_before)
+    assert not window.image_state.can_undo
+    assert len(warnings) == 1
+
+    window.close()
+    app.quit()
+
+
+def test_quick_restore_commits_one_undoable_plan_and_displays_report():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((32, 32, 3), (60, 80, 180), dtype=np.uint8)
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+
+    window._apply_quick_restore("Medium", "Vintage")
+
+    assert window.image_state.can_undo
+    assert np.array_equal(window.image_state.original_image, image)
+    assert "RESTORATION REPORT" in window.quick_restore_panel.report_label.text()
+    assert "Style: Vintage" in window.quick_restore_panel.report_label.text()
+
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+    assert window.quick_restore_panel.report_label.text().startswith("Load an image")
+
+    window.close()
+    app.quit()
+
+
+def test_advanced_pipeline_commits_as_one_undoable_change():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    image = np.full((20, 20), 100, dtype=np.uint8)
+    window.image_state.set_image(image)
+    window._refresh_analysis()
+    window._refresh_viewer()
+    window._update_action_states()
+    pipeline = window.advanced_panel.pipeline
+    pipeline.add("brightness")
+    pipeline.update_parameters(0, {"value": 25})
+    pipeline.add("contrast")
+    pipeline.update_parameters(1, {"factor": 1.0})
+
+    window._apply_advanced_pipeline(pipeline)
+
+    assert np.all(window.image_state.current_image == 125)
+    assert np.array_equal(window.image_state.original_image, image)
+    assert window.image_state.can_undo
+    window.undo()
+    assert np.array_equal(window.image_state.current_image, image)
+
+    window.close()
+    app.quit()

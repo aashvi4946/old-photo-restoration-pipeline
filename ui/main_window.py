@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 from core.image_state import ImageState
+from core.pipeline import ProcessingPipeline
 from core.repair_mask_state import RepairMaskState
+from core.restoration_engine import RestorationEngine
 from processing.analysis.analyze import analyze_image
 from processing.preprocessing.clahe import apply_clahe
 from processing.preprocessing.histogram import equalize_histogram
@@ -31,6 +33,14 @@ from processing.restoration.deblur import (
     create_motion_psf,
 )
 from processing.restoration.inpaint import apply_inpainting
+from processing.postprocessing.black_white import convert_to_black_and_white
+from processing.postprocessing.brightness import adjust_brightness
+from processing.postprocessing.color_correction import apply_color_correction
+from processing.postprocessing.contrast import adjust_contrast
+from processing.postprocessing.edge_enhancement import enhance_edges
+from processing.postprocessing.gamma import adjust_gamma
+from processing.postprocessing.sharpen import sharpen_image
+from processing.postprocessing.vintage import apply_vintage_style
 from models.image_profile import ImageProfile
 from ui.toolbar import AppToolbar
 from ui.image_viewer import ImageViewer
@@ -39,6 +49,9 @@ from ui.prepare_panel import PreparePanel
 from ui.denoise_panel import DenoisePanel
 from ui.deblur_panel import DeblurPanel
 from ui.repair_panel import RepairPanel
+from ui.finish_panel import FinishPanel
+from ui.quick_restore_panel import QuickRestorePanel
+from ui.advanced_panel import AdvancedPanel
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +63,7 @@ class MainWindow(QMainWindow):
 
         self.image_state = ImageState()
         self.repair_mask_state = RepairMaskState()
+        self.restoration_engine = RestorationEngine()
         self.image_profile: ImageProfile | None = None
         self._repair_tool = "brush"
         self._repair_mode_enabled = False
@@ -64,18 +78,24 @@ class MainWindow(QMainWindow):
 
         self.image_viewer = ImageViewer()
         self.analysis_panel = AnalysisPanel()
+        self.quick_restore_panel = QuickRestorePanel()
         self.prepare_panel = PreparePanel()
         self.denoise_panel = DenoisePanel()
         self.deblur_panel = DeblurPanel()
         self.repair_panel = RepairPanel()
+        self.finish_panel = FinishPanel()
+        self.advanced_panel = AdvancedPanel()
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self.quick_restore_panel)
         left_layout.addWidget(self.prepare_panel)
         left_layout.addWidget(self.denoise_panel)
         left_layout.addWidget(self.deblur_panel)
         left_layout.addWidget(self.repair_panel)
+        left_layout.addWidget(self.finish_panel)
+        left_layout.addWidget(self.advanced_panel)
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
@@ -100,6 +120,9 @@ class MainWindow(QMainWindow):
         self.prepare_panel.operation_requested.connect(self._apply_preprocessing)
         self.denoise_panel.operation_requested.connect(self._apply_denoising)
         self.deblur_panel.operation_requested.connect(self._apply_deblurring)
+        self.finish_panel.operation_requested.connect(self._apply_finishing)
+        self.quick_restore_panel.restore_requested.connect(self._apply_quick_restore)
+        self.advanced_panel.pipeline_requested.connect(self._apply_advanced_pipeline)
         self.repair_panel.tool_changed.connect(self._set_repair_tool)
         self.repair_panel.repair_mode_changed.connect(self._set_repair_mode)
         self.repair_panel.preview_changed.connect(self._set_repair_preview)
@@ -136,6 +159,7 @@ class MainWindow(QMainWindow):
             return
 
         self.repair_mask_state.reset()
+        self.quick_restore_panel.clear_report()
 
         self._refresh_analysis()
         self._refresh_viewer()
@@ -153,6 +177,7 @@ class MainWindow(QMainWindow):
         self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
+        self.quick_restore_panel.clear_report()
 
     def redo(self):
         if not self.image_state.redo():
@@ -161,6 +186,7 @@ class MainWindow(QMainWindow):
         self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
+        self.quick_restore_panel.clear_report()
 
     def reset(self):
         if not self.image_state.reset():
@@ -170,6 +196,7 @@ class MainWindow(QMainWindow):
         self._refresh_viewer()
         self.repair_mask_state.reset()
         self._update_action_states()
+        self.quick_restore_panel.clear_report()
 
     def _apply_preprocessing(
         self,
@@ -237,6 +264,73 @@ class MainWindow(QMainWindow):
 
         self._apply_operation(operation, operation_parameters, operations)
 
+    def _apply_finishing(
+        self,
+        operation: str,
+        parameters: dict[str, object],
+    ) -> None:
+        """Apply one explicit finishing operation as an undoable action."""
+
+        operations = {
+            "sharpen": ("Sharpen", sharpen_image),
+            "edge_enhancement": ("Edge Enhancement", enhance_edges),
+            "brightness": ("Brightness", adjust_brightness),
+            "contrast": ("Contrast", adjust_contrast),
+            "gamma": ("Gamma", adjust_gamma),
+            "color_correction": ("Color Correction", apply_color_correction),
+            "black_white": ("B&W", convert_to_black_and_white),
+            "vintage": ("Vintage", apply_vintage_style),
+        }
+        self._apply_operation(operation, parameters, operations)
+
+    def _apply_quick_restore(self, strength: str, style: str) -> None:
+        """Build and commit one rule-based Quick Restore pipeline."""
+
+        if not self.image_state.has_image or self.image_profile is None:
+            return
+        try:
+            plan = self.restoration_engine.build_plan(
+                self.image_profile,
+                strength=strength,
+                style=style,
+            )
+            result = self.restoration_engine.execute(
+                self.image_state.current_image,
+                plan,
+            )
+            self.image_state.apply_change(result)
+        except (TypeError, ValueError, cv2.error) as error:
+            QMessageBox.warning(self, "Quick Restore Failed", str(error))
+            return
+
+        self._refresh_analysis()
+        self._refresh_viewer()
+        self._update_action_states()
+        self.quick_restore_panel.update_report(plan.report)
+        self.statusBar().showMessage("Applied: Quick Restore", 5000)
+
+    def _apply_advanced_pipeline(self, pipeline: ProcessingPipeline) -> None:
+        """Execute a manually ordered Advanced pipeline as one undoable change."""
+
+        if not self.image_state.has_image:
+            return
+        try:
+            result = pipeline.execute(
+                self.image_state.current_image,
+                repair_mask=self.repair_mask_state.mask,
+            )
+            self.image_state.apply_change(result)
+        except (TypeError, ValueError, cv2.error) as error:
+            QMessageBox.warning(self, "Advanced Pipeline Failed", str(error))
+            return
+        if any(step.operation == "inpaint" for step in pipeline.steps):
+            self.repair_mask_state.reset()
+        self._refresh_analysis()
+        self._refresh_viewer()
+        self._update_action_states()
+        self.quick_restore_panel.clear_report()
+        self.statusBar().showMessage("Applied: Advanced Pipeline", 5000)
+
     def _apply_operation(
         self,
         operation: str,
@@ -266,6 +360,7 @@ class MainWindow(QMainWindow):
         self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
+        self.quick_restore_panel.clear_report()
         self.statusBar().showMessage(f"Applied: {label}", 5000)
 
     def _set_repair_tool(self, tool: str) -> None:
@@ -341,6 +436,7 @@ class MainWindow(QMainWindow):
         self._refresh_analysis()
         self._refresh_viewer()
         self._update_action_states()
+        self.quick_restore_panel.clear_report()
         self.statusBar().showMessage("Applied: Photo Repair", 5000)
 
     def _refresh_repair_canvas(self) -> None:
@@ -393,6 +489,9 @@ class MainWindow(QMainWindow):
         self.toolbar.reset_action.setEnabled(has_image)
         self.denoise_panel.set_image_available(has_image)
         self.deblur_panel.set_image_available(has_image)
+        self.finish_panel.set_image_available(has_image)
+        self.advanced_panel.set_image_available(has_image)
+        self.quick_restore_panel.set_image_available(has_image)
         if has_image:
             height, width = self.image_state.current_image.shape[:2]
             self.repair_mask_state.set_image_shape(height, width)
