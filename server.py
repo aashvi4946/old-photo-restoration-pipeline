@@ -159,6 +159,24 @@ def api_status():
     })
 
 
+@app.route("/api/original", methods=["GET"])
+def api_original():
+    """Return the original unmodified image as base64 for before/after comparison."""
+    image_state, err = _require_image()
+    if err:
+        return err
+    try:
+        orig = image_state.original_image
+        if orig is None:
+            return jsonify({"error": "No original image loaded."}), 400
+        return jsonify({
+            "success": True,
+            "original_image_b64": _image_to_b64(orig),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 # 1. /api/open
 @app.route("/api/open", methods=["POST"])
 def api_open():
@@ -185,7 +203,9 @@ def api_open():
         w = image.shape[1]
         repair_mask_state.set_image_shape(h, w)
 
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -198,7 +218,9 @@ def api_undo():
         return err
     try:
         image_state.undo()
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -211,7 +233,9 @@ def api_redo():
         return err
     try:
         image_state.redo()
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -224,7 +248,9 @@ def api_reset():
         return err
     try:
         image_state.reset()
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -324,7 +350,9 @@ def api_prepare():
             return jsonify({"error": f"Unknown prepare operation: {operation}"}), 400
 
         image_state.apply_change(result)
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -372,7 +400,9 @@ def api_denoise():
             return jsonify({"error": f"Unknown denoise operation: {operation}"}), 400
 
         image_state.apply_change(result)
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -413,7 +443,9 @@ def api_deblur():
             return jsonify({"error": f"Unknown deblur operation: {operation}"}), 400
 
         image_state.apply_change(result)
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -479,7 +511,9 @@ def api_repair_apply():
         result = apply_inpainting(image_state.current_image, repair_mask_state.mask, method=method, radius=radius)
         image_state.apply_change(result)
         repair_mask_state.reset()
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -533,7 +567,9 @@ def api_finish():
             return jsonify({"error": f"Unknown finish operation: {operation}"}), 400
 
         image_state.apply_change(result)
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -565,6 +601,7 @@ def api_quick_restore():
         report = plan.report
 
         response = _image_response(image_state)
+        response["original_image_b64"] = _image_to_b64(image_state.original_image)
         response["report"] = report
         response["width"] = profile.width
         response["height"] = profile.height
@@ -607,7 +644,9 @@ def api_advanced():
 
         result = pipeline.execute(image_state.current_image, repair_mask=mask)
         image_state.apply_change(result)
-        return jsonify(_image_response(image_state))
+        resp = _image_response(image_state)
+        resp["original_image_b64"] = _image_to_b64(image_state.original_image)
+        return jsonify(resp)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

@@ -86,25 +86,49 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
 #before-img {
   display: none;
   position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
   user-select: none; pointer-events: none;
   image-rendering: auto;
   clip-path: inset(0 50% 0 0);
+  z-index: 10;
 }
 #split-handle {
   display: none;
   position: absolute; top: 0; bottom: 0;
   left: 50%; transform: translateX(-50%);
   width: 3px; background: #0078d4;
-  cursor: ew-resize; z-index: 20;
+  cursor: ew-resize; z-index: 30;
+  touch-action: none;
+  pointer-events: auto;
+}
+#split-handle::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -15px; right: -15px;
+  cursor: ew-resize;
 }
 #split-handle::after {
   content: '◀▶';
   position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   background: #0078d4; color: #fff;
-  font-size: 11px; padding: 4px 6px; border-radius: 10px;
-  white-space: nowrap;
+  font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  white-space: nowrap; cursor: ew-resize;
+  pointer-events: auto;
 }
+.compare-badge {
+  position: absolute; top: 12px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.5px; border-radius: 4px;
+  pointer-events: none; z-index: 25;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.badge-before { left: 14px; }
+.badge-after { right: 14px; }
 /* Repair canvas */
 #repair-canvas {
   position: absolute; top: 0; left: 0;
@@ -756,6 +780,8 @@ button.btn-primary:disabled { background: #b3d4f0; border-color: #b3d4f0; color:
           <img id="viewer-img" src="" alt="Restored image">
           <img id="before-img" src="" alt="Original image">
           <div id="split-handle"></div>
+          <span class="compare-badge badge-before" id="badge-before" style="display:none">ORIGINAL</span>
+          <span class="compare-badge badge-after" id="badge-after" style="display:none">RESTORED</span>
           <canvas id="repair-canvas"></canvas>
         </div>
 
@@ -993,6 +1019,14 @@ function updateUI(data) {
     syncCanvasSize();
   }
 
+  if (data.original_image_b64) {
+    state.originalImageSrc = 'data:image/png;base64,' + data.original_image_b64;
+    const beforeImg = document.getElementById('before-img');
+    if (beforeImg && state.compareMode) {
+      beforeImg.src = state.originalImageSrc;
+    }
+  }
+
   state.canUndo = !!data.can_undo;
   state.canRedo = !!data.can_redo;
   document.getElementById('btn-undo').disabled = !state.canUndo;
@@ -1098,11 +1132,31 @@ document.getElementById('image-viewer').addEventListener('wheel', e => {
   applyTransform();
 }, { passive: false });
 
-// Pan with middle-mouse or when not in repair mode
+// Viewer pan & compare drag interactions
 const viewer = document.getElementById('image-viewer');
+let isDraggingSplit = false;
+
+function updateSplitFromClientX(clientX) {
+  const container = document.getElementById('img-container');
+  const rect = container.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+  updateSplit(pct);
+}
+
 viewer.addEventListener('mousedown', e => {
   if (!state.hasImage) return;
-  if (e.button === 1 || (e.button === 0 && !state.repairMode)) {
+
+  // In compare mode, left click on image slides the compare divider
+  if (state.compareMode && e.button === 0) {
+    isDraggingSplit = true;
+    updateSplitFromClientX(e.clientX);
+    e.preventDefault();
+    return;
+  }
+
+  // Pan with middle-mouse or left-mouse when not repairing or comparing
+  if (e.button === 1 || (e.button === 0 && !state.repairMode && !state.compareMode)) {
     state.isPanning = true;
     state.panStartX = e.clientX;
     state.panStartY = e.clientY;
@@ -1112,28 +1166,51 @@ viewer.addEventListener('mousedown', e => {
     e.preventDefault();
   }
 });
+
 document.addEventListener('mousemove', e => {
+  if (isDraggingSplit) {
+    updateSplitFromClientX(e.clientX);
+    return;
+  }
   if (!state.isPanning) return;
   state.panX = state.panStartPanX + (e.clientX - state.panStartX);
   state.panY = state.panStartPanY + (e.clientY - state.panStartY);
   applyTransform();
 });
-document.addEventListener('mouseup', e => {
-  if (!state.isPanning) return;
-  state.isPanning = false;
-  viewer.style.cursor = '';
+
+document.addEventListener('mouseup', () => {
+  if (isDraggingSplit) {
+    isDraggingSplit = false;
+  }
+  if (state.isPanning) {
+    state.isPanning = false;
+    viewer.style.cursor = '';
+  }
 });
 
 /* ============================================================
    BEFORE/AFTER COMPARE
    ============================================================ */
-function toggleCompare() {
+let splitPercent = 50;
+
+async function toggleCompare() {
   state.compareMode = !state.compareMode;
   document.getElementById('btn-compare').classList.toggle('active', state.compareMode);
   const beforeImg = document.getElementById('before-img');
   const splitHandle = document.getElementById('split-handle');
+  const badgeBefore = document.getElementById('badge-before');
+  const badgeAfter = document.getElementById('badge-after');
 
   if (state.compareMode) {
+    if (!state.originalImageSrc) {
+      try {
+        const r = await fetch('/api/original');
+        const d = await r.json();
+        if (d.original_image_b64) {
+          state.originalImageSrc = 'data:image/png;base64,' + d.original_image_b64;
+        }
+      } catch (_) {}
+    }
     if (!state.originalImageSrc) {
       setStatus('No original image stored. Load a fresh image first.');
       state.compareMode = false;
@@ -1143,37 +1220,59 @@ function toggleCompare() {
     beforeImg.src = state.originalImageSrc;
     beforeImg.style.display = 'block';
     splitHandle.style.display = 'block';
-    // Reset split to 50%
+    if (badgeBefore) badgeBefore.style.display = 'block';
+    if (badgeAfter) badgeAfter.style.display = 'block';
     splitPercent = 50;
     updateSplit(50);
+    setStatus('Compare: Drag slider ◀▶ to compare Original (left) vs Restored (right)');
   } else {
     beforeImg.style.display = 'none';
     splitHandle.style.display = 'none';
+    if (badgeBefore) badgeBefore.style.display = 'none';
+    if (badgeAfter) badgeAfter.style.display = 'none';
+    setStatus('Compare mode closed');
   }
 }
 
-let splitPercent = 50;
-let isDraggingSplit = false;
-
-document.getElementById('split-handle').addEventListener('mousedown', e => {
-  isDraggingSplit = true;
-  e.preventDefault();
-});
-document.addEventListener('mousemove', e => {
-  if (!isDraggingSplit) return;
-  const container = document.getElementById('img-container');
-  const rect = container.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
-  splitPercent = pct;
-  updateSplit(pct);
-});
-document.addEventListener('mouseup', () => { isDraggingSplit = false; });
-
 function updateSplit(pct) {
-  document.getElementById('before-img').style.clipPath = `inset(0 ${100-pct}% 0 0)`;
-  document.getElementById('split-handle').style.left = pct + '%';
+  splitPercent = Math.max(0, Math.min(100, pct));
+  const beforeImg = document.getElementById('before-img');
+  const splitHandle = document.getElementById('split-handle');
+  if (beforeImg) {
+    beforeImg.style.clipPath = `inset(0 ${100 - splitPercent}% 0 0)`;
+  }
+  if (splitHandle) {
+    splitHandle.style.left = splitPercent + '%';
+  }
 }
+
+const splitHandleEl = document.getElementById('split-handle');
+splitHandleEl.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  isDraggingSplit = true;
+  try { splitHandleEl.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+splitHandleEl.addEventListener('pointermove', e => {
+  if (!isDraggingSplit) return;
+  updateSplitFromClientX(e.clientX);
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+splitHandleEl.addEventListener('pointerup', e => {
+  if (!isDraggingSplit) return;
+  isDraggingSplit = false;
+  try { splitHandleEl.releasePointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+splitHandleEl.addEventListener('pointercancel', () => {
+  isDraggingSplit = false;
+});
 
 /* ============================================================
    API CALLS
