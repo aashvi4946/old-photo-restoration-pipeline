@@ -1,0 +1,8 @@
+flask
+flask-cors
+opencv-python
+numpy
+scipy
+pillow
+matplotlib
+pytest

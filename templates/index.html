@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Old Photo Restorer</title>
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; color: #222; background: #f0f0f0; }
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+/* TOOLBAR */
+#toolbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: #2c2c2c;
+  border-bottom: 1px solid #111;
+  flex-shrink: 0; min-height: 46px;
+}
+#toolbar-sep { width: 1px; height: 24px; background: #555; margin: 0 4px; }
+#toolbar-status { margin-left: auto; font-size: 12px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+
+/* MAIN BODY */
+#main { display: flex; flex: 1; overflow: hidden; gap: 0; }
+
+/* LEFT PANEL */
+#left-panel {
+  width: 230px; flex-shrink: 0;
+  background: #f8f8f8; border-right: 1px solid #d8d8d8;
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* CENTER */
+#center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+/* VIEWER TOOLBAR */
+#viewer-toolbar {
+  background: #3a3a3a; border-bottom: 1px solid #222;
+  padding: 4px 10px; display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+#viewer-toolbar button {
+  padding: 4px 10px; font-size: 12px;
+  background: #555; color: #eee; border: 1px solid #666;
+  border-radius: 4px; cursor: pointer;
+}
+#viewer-toolbar button:hover { background: #666; }
+#viewer-toolbar button.active { background: #0078d4; border-color: #005fa3; color: #fff; }
+#viewer-toolbar button:disabled { background: #444; color: #777; cursor: default; }
+#viewer-zoom-info { font-size: 11px; color: #aaa; margin-left: auto; }
+
+/* IMAGE VIEWER */
+#image-viewer {
+  flex: 1;
+  background: #2a2a2a;
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+#viewer-placeholder { text-align: center; color: #666; user-select: none; }
+#viewer-placeholder .ph-icon { font-size: 48px; margin-bottom: 12px; }
+#viewer-placeholder h2 { font-size: 18px; margin-bottom: 6px; color: #888; }
+#viewer-placeholder p { font-size: 12px; color: #666; }
+#viewer-placeholder .ph-hint { margin-top: 16px; font-size: 11px; color: #555; }
+
+/* Image display container — centred with zoom/pan */
+#img-container {
+  position: relative;
+  display: none;
+  user-select: none;
+}
+#viewer-img {
+  display: block;
+  user-select: none;
+  pointer-events: none;
+  image-rendering: auto;
+}
+/* Before/After split */
+#before-img {
+  display: none;
+  position: absolute; top: 0; left: 0;
+  user-select: none; pointer-events: none;
+  image-rendering: auto;
+  clip-path: inset(0 50% 0 0);
+}
+#split-handle {
+  display: none;
+  position: absolute; top: 0; bottom: 0;
+  left: 50%; transform: translateX(-50%);
+  width: 3px; background: #0078d4;
+  cursor: ew-resize; z-index: 20;
+}
+#split-handle::after {
+  content: '◀▶';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #0078d4; color: #fff;
+  font-size: 11px; padding: 4px 6px; border-radius: 10px;
+  white-space: nowrap;
+}
+/* Repair canvas */
+#repair-canvas {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: none; cursor: none;
+  pointer-events: auto;
+  opacity: 0.7;
+}
+/* Mask overlay */
+#mask-overlay {
+  display: none !important;
+}
+/* Circular brush indicator cursor */
+#brush-cursor {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  transform: translate(-50%, -50%);
+  display: none;
+  z-index: 9999;
+}
+#brush-cursor::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 7px; height: 1px;
+  background: #ffffff;
+  box-shadow: 0 0 1px rgba(0, 0, 0, 0.9);
+  transform: translate(-50%, -50%);
+}
+#brush-cursor::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 1px; height: 7px;
+  background: #ffffff;
+  box-shadow: 0 0 1px rgba(0, 0, 0, 0.9);
+  transform: translate(-50%, -50%);
+}
+/* Loading overlay */
+#loading-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: none; align-items: center; justify-content: center;
+  z-index: 30;
+}
+.spinner-wrap { text-align: center; color: #fff; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 4px solid rgba(255,255,255,0.2); border-top-color: #fff;
+  border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px;
+}
+.spinner-label { font-size: 13px; color: #ccc; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* STATUS BAR */
+#status-bar {
+  background: #2c2c2c; border-top: 1px solid #111;
+  padding: 4px 12px; font-size: 12px; color: #aaa; flex-shrink: 0;
+  min-height: 26px; display: flex; align-items: center; gap: 12px;
+}
+#status-bar .sb-sep { color: #555; }
+#status-info { margin-left: auto; font-size: 11px; color: #666; }
+
+/* RIGHT PANEL */
+#right-panel {
+  width: 210px; flex-shrink: 0;
+  background: #f8f8f8; border-left: 1px solid #d8d8d8;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+#right-panel .rp-title {
+  background: #eeeeee; border-bottom: 1px solid #d8d8d8;
+  padding: 8px 12px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.5px; color: #555; text-transform: uppercase;
+}
+#analysis-empty { font-size: 12px; color: #aaa; text-align: center; padding: 20px 12px; }
+.analysis-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 12px; border-bottom: 1px solid #eeeeee; font-size: 12px;
+}
+.analysis-label { color: #777; }
+.analysis-value { font-weight: 600; color: #222; text-align: right; }
+.analysis-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-low { background: #d4edda; color: #155724; }
+.badge-medium { background: #fff3cd; color: #856404; }
+.badge-high { background: #f8d7da; color: #721c24; }
+.badge-none { background: #e2e3e5; color: #383d41; }
+
+/* ============================================================
+   TOOLBAR BUTTONS (dark style)
+   ============================================================ */
+#toolbar button {
+  padding: 6px 12px;
+  border: 1px solid #555; border-radius: 6px;
+  background: #3d3d3d; cursor: pointer;
+  font-size: 13px; color: #eee; white-space: nowrap;
+  transition: background 0.1s;
+}
+#toolbar button:hover { background: #505050; }
+#toolbar button:disabled { color: #666; background: #2d2d2d; border-color: #444; cursor: default; }
+#toolbar button.active { background: #0078d4; border-color: #005fa3; color: #fff; }
+
+/* toolbar open input hidden */
+#file-input { display: none; }
+
+/* ============================================================
+   LEFT PANEL BUTTONS & INPUTS
+   ============================================================ */
+button {
+  padding: 7px 12px;
+  border: 1px solid #cccccc; border-radius: 6px;
+  background: #ffffff; cursor: pointer;
+  font-size: 13px; color: #222; white-space: nowrap;
+  transition: background 0.1s;
+}
+button:hover { background: #eeeeee; }
+button:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; cursor: default; }
+button.active { background: #dde8f7; border-color: #0078d4; font-weight: 600; }
+
+select, input[type="number"], input[type="text"] {
+  height: 30px; padding: 0 8px;
+  border: 1px solid #d0d0d0; border-radius: 5px;
+  background: #fff; color: #222; font-size: 12px;
+  width: 100%;
+}
+select:focus, input:focus { outline: none; border-color: #0078d4; }
+input[type="checkbox"] { width: auto; height: auto; cursor: pointer; accent-color: #0078d4; }
+label { font-size: 12px; color: #555; display: block; margin-bottom: 2px; }
+
+/* ============================================================
+   ACCORDION SECTIONS
+   ============================================================ */
+.section { border-bottom: 1px solid #e8e8e8; }
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; cursor: pointer; user-select: none;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  color: #444; background: #f0f0f0; text-transform: uppercase;
+}
+.section-header:hover { background: #e8e8e8; }
+.section-arrow { font-size: 10px; transition: transform 0.2s; }
+.section-body { padding: 10px 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.section.collapsed .section-body { display: none; }
+.section.collapsed .section-arrow { transform: rotate(-90deg); }
+
+/* ============================================================
+   INLINE PARAM SUB-SECTIONS
+   ============================================================ */
+.param-block {
+  background: #f7f7f7; border: 1px solid #e0e0e0;
+  border-radius: 6px; padding: 8px;
+  display: none; flex-direction: column; gap: 6px; margin-top: 2px;
+}
+.param-block.open { display: flex; }
+.param-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.param-row label { margin: 0; white-space: nowrap; flex-shrink: 0; min-width: 90px; font-size: 11px; }
+.param-row input, .param-row select { flex: 1; min-width: 0; height: 26px; font-size: 12px; }
+.param-actions { display: flex; gap: 6px; margin-top: 4px; }
+.param-actions button { flex: 1; padding: 5px 8px; font-size: 12px; }
+.param-actions button.btn-apply {
+  background: #0078d4; color: #fff; border-color: #005fa3;
+}
+.param-actions button.btn-apply:hover { background: #005fa3; }
+
+/* ============================================================
+   SECTION-SPECIFIC LAYOUTS
+   ============================================================ */
+.btn-row { display: flex; gap: 6px; }
+.btn-row button { flex: 1; }
+.form-group { display: flex; flex-direction: column; gap: 2px; }
+button.btn-full { width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; }
+button.btn-action { width: 100%; text-align: center; margin-top: 2px; font-size: 12px; }
+button.btn-primary {
+  background: #0078d4; color: #fff; border-color: #005fa3; font-weight: 600;
+}
+button.btn-primary:hover { background: #005fa3; }
+button.btn-primary:disabled { background: #b3d4f0; border-color: #b3d4f0; color: #fff; cursor: default; }
+
+/* QUICK RESTORE */
+#restore-report {
+  font-family: monospace; font-size: 11px; color: #333;
+  white-space: pre-wrap; word-break: break-word;
+  background: #f0f7ff; border: 1px solid #c8e1ff;
+  border-radius: 4px; padding: 8px; display: none;
+  max-height: 140px; overflow-y: auto; line-height: 1.5;
+}
+
+/* REPAIR SECTION */
+.tool-btn { padding: 6px 10px; font-size: 12px; }
+.tool-btn.active { background: #dde8f7; border-color: #0078d4; font-weight: 600; }
+
+/* ADVANCED SECTION */
+#pipeline-list {
+  list-style: decimal; padding-left: 20px;
+  min-height: 60px; max-height: 130px; overflow-y: auto;
+  border: 1px solid #e0e0e0; border-radius: 6px;
+  background: #fafafa; padding: 8px 8px 8px 28px;
+  font-size: 12px;
+}
+#pipeline-list li { cursor: pointer; padding: 3px 4px; border-radius: 4px; }
+#pipeline-list li:hover { background: #eeeeee; }
+#pipeline-list li.selected { background: #dde8f7; border-left: 2px solid #0078d4; padding-left: 6px; font-weight: 600; }
+#pipeline-list:empty::before {
+  content: "No operations yet."; color: #aaa;
+  display: block; list-style: none; padding-left: 0; text-align: center;
+  font-size: 12px; padding-top: 12px;
+}
+#adv-params-form { display: flex; flex-direction: column; gap: 6px; }
+
+/* Export dropdown */
+.dropdown-wrap { position: relative; display: inline-block; }
+.dropdown-menu {
+  position: absolute; top: 100%; left: 0; z-index: 100;
+  background: #2c2c2c; border: 1px solid #555; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  display: none; min-width: 140px; overflow: hidden; margin-top: 2px;
+}
+.dropdown-menu.open { display: block; }
+.dropdown-menu button {
+  display: block; width: 100%; text-align: left;
+  border: none; border-radius: 0; padding: 8px 14px;
+  font-size: 13px; border-bottom: 1px solid #444;
+  background: transparent; color: #eee;
+}
+.dropdown-menu button:last-child { border-bottom: none; }
+.dropdown-menu button:hover { background: #444; }
+
+/* Zoom cursor */
+#image-viewer.zoom-in-mode { cursor: zoom-in; }
+#image-viewer.zoom-out-mode { cursor: zoom-out; }
+#image-viewer.pan-mode { cursor: grab; }
+#image-viewer.pan-mode.panning { cursor: grabbing; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ======================================================
+       TOOLBAR
+       ====================================================== -->
+  <div id="toolbar">
+    <input type="file" id="file-input" accept="image/*">
+    <button id="btn-open" onclick="document.getElementById('file-input').click()">📂 Open</button>
+    <div class="dropdown-wrap">
+      <button id="btn-export" disabled onclick="toggleExportMenu()">💾 Export ▾</button>
+      <div class="dropdown-menu" id="export-menu">
+        <button onclick="exportImage('png')">Export as PNG</button>
+        <button onclick="exportImage('jpg')">Export as JPEG</button>
+        <button onclick="exportImage('tiff')">Export as TIFF</button>
+      </div>
+    </div>
+    <div id="toolbar-sep"></div>
+    <button id="btn-undo" disabled onclick="doUndo()">↩ Undo</button>
+    <button id="btn-redo" disabled onclick="doRedo()">↪ Redo</button>
+    <button id="btn-reset" disabled onclick="doReset()">⟳ Reset</button>
+    <div id="toolbar-sep" style="width:1px;height:24px;background:#555;margin:0 4px;"></div>
+    <button id="btn-compare" disabled onclick="toggleCompare()" title="Before/After split view">⟺ Compare</button>
+    <span id="toolbar-status"></span>
+  </div>
+
+  <!-- ======================================================
+       MAIN CONTENT
+       ====================================================== -->
+  <div id="main">
+
+    <!-- LEFT PANEL -->
+    <div id="left-panel">
+
+      <!-- 1. QUICK RESTORE -->
+      <div class="section" id="sec-quick">
+        <div class="section-header" onclick="toggleSection('sec-quick')">
+          <span>⚡ Quick Restore</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <div class="form-group">
+            <label>Strength</label>
+            <select id="qr-strength"><option>Light</option><option selected>Medium</option><option>Strong</option></select>
+          </div>
+          <div class="form-group">
+            <label>Style</label>
+            <select id="qr-style"><option>Natural</option><option>Vintage</option><option>B&W</option></select>
+          </div>
+          <button class="btn-action btn-primary" id="btn-restore" disabled onclick="doQuickRestore()">▶ Restore</button>
+          <pre id="restore-report"></pre>
+        </div>
+      </div>
+
+      <!-- 2. PREPARE -->
+      <div class="section collapsed" id="sec-prepare">
+        <div class="section-header" onclick="toggleSection('sec-prepare')">
+          <span>🔧 Prepare</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <button class="btn-full" disabled data-needs-image onclick="applyOperation('/api/prepare',{operation:'histogram'})">Histogram Equalization</button>
+          <!-- CLAHE -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('clahe-params',this)">CLAHE…</button>
+          <div class="param-block" id="clahe-params">
+            <div class="param-row"><label>Clip Limit</label><input type="number" id="clahe-clip" min="0.1" max="100" step="0.1" value="2.0"></div>
+            <div class="param-row"><label>Tile Width</label><input type="number" id="clahe-tw" min="1" max="256" value="8"></div>
+            <div class="param-row"><label>Tile Height</label><input type="number" id="clahe-th" min="1" max="256" value="8"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/prepare',{operation:'clahe',params:{clip_limit:numVal('clahe-clip'),tile_grid_size:[numVal('clahe-tw'),numVal('clahe-th')]}});closeParam('clahe-params')">Apply</button>
+              <button onclick="closeParam('clahe-params')">Cancel</button>
+            </div>
+          </div>
+          <button class="btn-full" disabled data-needs-image onclick="applyOperation('/api/prepare',{operation:'white_balance'})">Auto White Balance</button>
+          <button class="btn-full" disabled data-needs-image onclick="applyOperation('/api/prepare',{operation:'normalize'})">Normalize</button>
+          <!-- RESIZE -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('resize-params',this)">Resize…</button>
+          <div class="param-block" id="resize-params">
+            <div class="param-row"><label>Width</label><input type="number" id="resize-w" min="1" max="100000" oninput="onResizeInput('w')"></div>
+            <div class="param-row"><label>Height</label><input type="number" id="resize-h" min="1" max="100000" oninput="onResizeInput('h')"></div>
+            <div class="param-row">
+              <label><input type="checkbox" id="resize-ar" checked> Maintain aspect ratio</label>
+            </div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/prepare',{operation:'resize',params:{width:numVal('resize-w'),height:numVal('resize-h')}});closeParam('resize-params')">Apply</button>
+              <button onclick="closeParam('resize-params')">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. DENOISE -->
+      <div class="section collapsed" id="sec-denoise">
+        <div class="section-header" onclick="toggleSection('sec-denoise')">
+          <span>🌫 Denoise</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <!-- Gaussian -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('gauss-params',this)">Gaussian…</button>
+          <div class="param-block" id="gauss-params">
+            <div class="param-row">
+              <label>Kernel</label>
+              <select id="gauss-kernel"><option>3</option><option selected>5</option><option>7</option><option>9</option></select>
+            </div>
+            <div class="param-row"><label>Sigma</label><input type="number" id="gauss-sigma" min="0" step="0.1" value="0"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/denoise',{operation:'gaussian',params:{kernel_size:numVal('gauss-kernel'),sigma:numVal('gauss-sigma')}});closeParam('gauss-params')">Apply</button>
+              <button onclick="closeParam('gauss-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Median -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('median-params',this)">Median…</button>
+          <div class="param-block" id="median-params">
+            <div class="param-row">
+              <label>Kernel</label>
+              <select id="median-kernel"><option selected>3</option><option>5</option><option>7</option><option>9</option></select>
+            </div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/denoise',{operation:'median',params:{kernel_size:numVal('median-kernel')}});closeParam('median-params')">Apply</button>
+              <button onclick="closeParam('median-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Bilateral -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('bilat-params',this)">Bilateral…</button>
+          <div class="param-block" id="bilat-params">
+            <div class="param-row"><label>Diameter</label><input type="number" id="bilat-d" min="1" max="99" value="9"></div>
+            <div class="param-row"><label>Color Sigma</label><input type="number" id="bilat-cs" min="0.1" step="0.1" value="75"></div>
+            <div class="param-row"><label>Space Sigma</label><input type="number" id="bilat-ss" min="0.1" step="0.1" value="75"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/denoise',{operation:'bilateral',params:{diameter:numVal('bilat-d'),sigma_color:numVal('bilat-cs'),sigma_space:numVal('bilat-ss')}});closeParam('bilat-params')">Apply</button>
+              <button onclick="closeParam('bilat-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Non-Local Means -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('nlm-params',this)">Non-Local Means…</button>
+          <div class="param-block" id="nlm-params">
+            <div class="param-row"><label>Strength</label><input type="number" id="nlm-h" min="0.1" step="0.1" value="10"></div>
+            <div class="param-row"><label>Color Strength</label><input type="number" id="nlm-hc" min="0.1" step="0.1" value="10"></div>
+            <div class="param-row">
+              <label>Template Win</label>
+              <select id="nlm-tw"><option>3</option><option>5</option><option selected>7</option><option>9</option><option>11</option><option>15</option><option>21</option><option>31</option></select>
+            </div>
+            <div class="param-row">
+              <label>Search Win</label>
+              <select id="nlm-sw"><option>3</option><option>5</option><option>7</option><option>9</option><option>11</option><option>15</option><option selected>21</option></select>
+            </div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/denoise',{operation:'non_local_means',params:{h:numVal('nlm-h'),h_color:numVal('nlm-hc'),template_window_size:numVal('nlm-tw'),search_window_size:numVal('nlm-sw')}});closeParam('nlm-params')">Apply</button>
+              <button onclick="closeParam('nlm-params')">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. DEBLUR -->
+      <div class="section collapsed" id="sec-deblur">
+        <div class="section-header" onclick="toggleSection('sec-deblur')">
+          <span>🔍 Deblur</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <!-- Unsharp Mask -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('unsharp-params',this)">Unsharp Mask…</button>
+          <div class="param-block" id="unsharp-params">
+            <div class="param-row"><label>Radius</label><input type="number" id="us-radius" min="0.1" max="100" step="0.1" value="1"></div>
+            <div class="param-row"><label>Amount</label><input type="number" id="us-amount" min="0.1" max="10" step="0.1" value="1"></div>
+            <div class="param-row"><label>Threshold</label><input type="number" id="us-thresh" min="0" max="255" value="0"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/deblur',{operation:'unsharp',params:{radius:numVal('us-radius'),amount:numVal('us-amount'),threshold:numVal('us-thresh')}});closeParam('unsharp-params')">Apply</button>
+              <button onclick="closeParam('unsharp-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Wiener -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('wiener-params',this)">Wiener…</button>
+          <div class="param-block" id="wiener-params">
+            <div class="param-row">
+              <label>PSF Length</label>
+              <select id="w-psfl"><option>3</option><option>5</option><option>7</option><option selected>9</option><option>15</option><option>21</option></select>
+            </div>
+            <div class="param-row"><label>PSF Angle</label><input type="number" id="w-psfa" min="-360" max="360" step="0.1" value="0"></div>
+            <div class="param-row"><label>Balance</label><input type="number" id="w-bal" min="0.001" max="1" step="0.001" value="0.01"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/deblur',{operation:'wiener',params:{psf_length:numVal('w-psfl'),psf_angle:numVal('w-psfa'),balance:numVal('w-bal')}});closeParam('wiener-params')">Apply</button>
+              <button onclick="closeParam('wiener-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Lucy-Richardson -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('lr-params',this)">Lucy–Richardson…</button>
+          <div class="param-block" id="lr-params">
+            <div class="param-row">
+              <label>PSF Length</label>
+              <select id="lr-psfl"><option>3</option><option>5</option><option>7</option><option selected>9</option><option>15</option><option>21</option></select>
+            </div>
+            <div class="param-row"><label>PSF Angle</label><input type="number" id="lr-psfa" min="-360" max="360" step="0.1" value="0"></div>
+            <div class="param-row"><label>Iterations</label><input type="number" id="lr-iter" min="1" max="100" value="10"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/deblur',{operation:'lucy_richardson',params:{psf_length:numVal('lr-psfl'),psf_angle:numVal('lr-psfa'),iterations:numVal('lr-iter')}});closeParam('lr-params')">Apply</button>
+              <button onclick="closeParam('lr-params')">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. PHOTO REPAIR -->
+      <div class="section collapsed" id="sec-repair">
+        <div class="section-header" onclick="toggleSection('sec-repair')">
+          <span>🩹 Photo Repair</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <label><input type="checkbox" id="repair-enable" onchange="toggleRepairMode(this.checked)" disabled> Enable repair painting</label>
+          <div class="btn-row">
+            <button id="repair-brush" class="tool-btn active" onclick="setRepairTool('brush')" disabled>🖌 Brush</button>
+            <button id="repair-eraser" class="tool-btn" onclick="setRepairTool('eraser')" disabled>⌫ Eraser</button>
+          </div>
+          <div class="form-group">
+            <label>Brush Size</label>
+            <input type="number" id="brush-size" min="1" max="200" value="15" disabled oninput="onBrushSizeChange(this.value)">
+          </div>
+          <label><input type="checkbox" id="mask-overlay-chk" checked onchange="toggleMaskOverlay(this.checked)" disabled> Show mask overlay</label>
+          <div class="btn-row">
+            <button disabled id="btn-undo-mask" onclick="doMaskAction('undo')">↩ Undo</button>
+            <button disabled id="btn-redo-mask" onclick="doMaskAction('redo')">↪ Redo</button>
+          </div>
+          <button class="btn-action" disabled id="btn-clear-mask" onclick="doMaskAction('clear')">Clear Mask</button>
+          <div class="form-group">
+            <label>Inpainting Method</label>
+            <select id="inpaint-method" disabled>
+              <option value="telea">Telea</option>
+              <option value="navier_stokes">Navier-Stokes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Repair Radius</label>
+            <input type="number" id="repair-radius" min="0.1" max="100" step="0.5" value="3.0" disabled>
+          </div>
+          <button class="btn-action btn-primary" disabled id="btn-apply-repair" onclick="applyRepair()">Apply Repair</button>
+        </div>
+      </div>
+
+      <!-- 6. FINISH -->
+      <div class="section collapsed" id="sec-finish">
+        <div class="section-header" onclick="toggleSection('sec-finish')">
+          <span>✨ Finish</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <!-- Sharpen -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('sharpen-params',this)">Sharpen…</button>
+          <div class="param-block" id="sharpen-params">
+            <div class="param-row"><label>Amount</label><input type="number" id="sh-amount" min="0" max="3" step="0.1" value="1"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'sharpen',params:{amount:numVal('sh-amount')}});closeParam('sharpen-params')">Apply</button>
+              <button onclick="closeParam('sharpen-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Edge Enhancement -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('edge-params',this)">Edge Enhancement…</button>
+          <div class="param-block" id="edge-params">
+            <div class="param-row"><label>Strength</label><input type="number" id="edge-str" min="0" max="3" step="0.1" value="0.5"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'edge_enhancement',params:{strength:numVal('edge-str')}});closeParam('edge-params')">Apply</button>
+              <button onclick="closeParam('edge-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Brightness -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('bright-params',this)">Brightness…</button>
+          <div class="param-block" id="bright-params">
+            <div class="param-row"><label>Value</label><input type="number" id="bri-val" min="-255" max="255" value="0"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'brightness',params:{value:numVal('bri-val')}});closeParam('bright-params')">Apply</button>
+              <button onclick="closeParam('bright-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Contrast -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('contrast-params',this)">Contrast…</button>
+          <div class="param-block" id="contrast-params">
+            <div class="param-row"><label>Factor</label><input type="number" id="con-factor" min="0.1" max="3" step="0.1" value="1"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'contrast',params:{factor:numVal('con-factor')}});closeParam('contrast-params')">Apply</button>
+              <button onclick="closeParam('contrast-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Gamma -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('gamma-params',this)">Gamma…</button>
+          <div class="param-block" id="gamma-params">
+            <div class="param-row"><label>Gamma</label><input type="number" id="gam-val" min="0.1" max="5" step="0.1" value="1"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'gamma',params:{gamma:numVal('gam-val')}});closeParam('gamma-params')">Apply</button>
+              <button onclick="closeParam('gamma-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Color Correction -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('color-params',this)">Color Correction…</button>
+          <div class="param-block" id="color-params">
+            <div class="param-row"><label>Blue Gain</label><input type="number" id="cc-blue" min="0.1" max="3" step="0.05" value="1"></div>
+            <div class="param-row"><label>Green Gain</label><input type="number" id="cc-green" min="0.1" max="3" step="0.05" value="1"></div>
+            <div class="param-row"><label>Red Gain</label><input type="number" id="cc-red" min="0.1" max="3" step="0.05" value="1"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'color_correction',params:{blue_gain:numVal('cc-blue'),green_gain:numVal('cc-green'),red_gain:numVal('cc-red')}});closeParam('color-params')">Apply</button>
+              <button onclick="closeParam('color-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- Adaptive Threshold -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('athresh-params',this)">Adaptive Threshold…</button>
+          <div class="param-block" id="athresh-params">
+            <div class="param-row"><label>Block Size</label><input type="number" id="at-block" min="3" max="255" step="2" value="11"></div>
+            <div class="param-row"><label>Constant</label><input type="number" id="at-const" min="-255" max="255" step="0.1" value="2"></div>
+            <div class="param-row">
+              <label>Method</label>
+              <select id="at-method"><option value="gaussian">Gaussian</option><option value="mean">Mean</option></select>
+            </div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'adaptive_threshold',params:{block_size:numVal('at-block'),constant:numVal('at-const'),method:document.getElementById('at-method').value}});closeParam('athresh-params')">Apply</button>
+              <button onclick="closeParam('athresh-params')">Cancel</button>
+            </div>
+          </div>
+          <!-- B&W (immediate) -->
+          <button class="btn-full" disabled data-needs-image onclick="applyOperation('/api/finish',{operation:'black_white'})">B&amp;W</button>
+          <!-- Vintage -->
+          <button class="btn-full" disabled data-needs-image onclick="toggleParam('vintage-params',this)">Vintage…</button>
+          <div class="param-block" id="vintage-params">
+            <div class="param-row"><label>Intensity</label><input type="number" id="vint-int" min="0" max="1" step="0.05" value="0.35"></div>
+            <div class="param-actions">
+              <button class="btn-apply" onclick="applyOperation('/api/finish',{operation:'vintage',params:{intensity:numVal('vint-int')}});closeParam('vintage-params')">Apply</button>
+              <button onclick="closeParam('vintage-params')">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. ADVANCED PIPELINE -->
+      <div class="section collapsed" id="sec-advanced">
+        <div class="section-header" onclick="toggleSection('sec-advanced')">
+          <span>⚙ Advanced Pipeline</span><span class="section-arrow">▼</span>
+        </div>
+        <div class="section-body">
+          <div class="form-group">
+            <label>Operation Browser</label>
+            <select id="adv-op-browser">
+              <optgroup label="Prepare">
+                <option value="histogram">Histogram Equalization</option>
+                <option value="clahe">CLAHE</option>
+                <option value="white_balance">Auto White Balance</option>
+                <option value="normalize">Normalize</option>
+                <option value="resize">Resize</option>
+              </optgroup>
+              <optgroup label="Restore">
+                <option value="gaussian">Gaussian Denoise</option>
+                <option value="median">Median Denoise</option>
+                <option value="bilateral">Bilateral Denoise</option>
+                <option value="non_local_means">Non-Local Means</option>
+                <option value="unsharp">Unsharp Mask</option>
+                <option value="wiener">Wiener Deconvolution</option>
+                <option value="lucy_richardson">Lucy–Richardson</option>
+                <option value="inpaint">Inpainting (Repair Mask)</option>
+              </optgroup>
+              <optgroup label="Finish">
+                <option value="sharpen">Sharpen</option>
+                <option value="edge_enhancement">Edge Enhancement</option>
+                <option value="brightness">Brightness</option>
+                <option value="contrast">Contrast</option>
+                <option value="gamma">Gamma</option>
+                <option value="color_correction">Color Correction</option>
+                <option value="adaptive_threshold">Adaptive Threshold</option>
+                <option value="black_white">B&amp;W</option>
+                <option value="vintage">Vintage</option>
+              </optgroup>
+            </select>
+          </div>
+          <button class="btn-action" onclick="advAddStep()">+ Add to Pipeline</button>
+          <div class="form-group">
+            <label>Pipeline Steps</label>
+            <ol id="pipeline-list"></ol>
+          </div>
+          <div class="btn-row">
+            <button onclick="advMoveStep(-1)">▲ Up</button>
+            <button onclick="advMoveStep(1)">▼ Down</button>
+            <button onclick="advRemoveStep()">✕ Remove</button>
+          </div>
+          <button class="btn-action" onclick="advClearPipeline()">Clear Pipeline</button>
+          <div class="form-group">
+            <label>Parameters</label>
+            <div id="adv-params-form"></div>
+          </div>
+          <button class="btn-action" onclick="advUpdateParams()">Update Parameters</button>
+          <button class="btn-action btn-primary" disabled id="btn-apply-pipeline" onclick="advApplyPipeline()">▶ Apply Pipeline</button>
+        </div>
+      </div>
+
+    </div><!-- /left-panel -->
+
+    <!-- CENTER: VIEWER -->
+    <div id="center">
+      <!-- Viewer toolbar -->
+      <div id="viewer-toolbar">
+        <button id="btn-fit" onclick="zoomFit()" title="Fit to window">⤢ Fit</button>
+        <button id="btn-100" onclick="zoom100()" title="100%">1:1</button>
+        <button onclick="zoomBy(1.25)" title="Zoom In">+</button>
+        <button onclick="zoomBy(0.8)" title="Zoom Out">−</button>
+        <span id="viewer-zoom-info">No image</span>
+      </div>
+
+      <div id="image-viewer">
+        <div id="viewer-placeholder">
+          <div class="ph-icon">🖼</div>
+          <h2>No Image Loaded</h2>
+          <p>Open an old photograph to begin restoration.</p>
+          <div class="ph-hint">Supported formats: JPEG, PNG, TIFF, BMP, WebP</div>
+        </div>
+
+        <!-- Transform container -->
+        <div id="img-container">
+          <img id="viewer-img" src="" alt="Restored image">
+          <img id="before-img" src="" alt="Original image">
+          <div id="split-handle"></div>
+          <canvas id="repair-canvas"></canvas>
+        </div>
+
+        <div id="brush-cursor"></div>
+
+        <div id="loading-overlay">
+          <div class="spinner-wrap">
+            <div class="spinner"></div>
+            <div class="spinner-label" id="spinner-label">Processing…</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="status-bar">
+        <span id="status-msg">Ready</span>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: ANALYSIS -->
+    <div id="right-panel">
+      <div class="rp-title">📊 Image Analysis</div>
+      <div id="analysis-empty">No image loaded.</div>
+      <div id="analysis-data" style="display:none">
+        <div class="analysis-row"><span class="analysis-label">Size</span><span class="analysis-value" id="an-size">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Channels</span><span class="analysis-value" id="an-channels">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Grayscale</span><span class="analysis-value" id="an-gray">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Blur</span><span class="analysis-value" id="an-blur">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Noise</span><span class="analysis-value" id="an-noise">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Brightness</span><span class="analysis-value" id="an-bright">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Contrast</span><span class="analysis-value" id="an-contrast">—</span></div>
+        <div class="analysis-row"><span class="analysis-label">Color Cast</span><span class="analysis-value" id="an-cast">—</span></div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
+const state = {
+  hasImage: false,
+  canUndo: false,
+  canRedo: false,
+  currentImageSrc: null,  // data URL of current (processed) image
+  originalImageSrc: null, // data URL of original (for before/after)
+  imageWidth: 0,
+  imageHeight: 0,
+  repairMode: false,
+  repairTool: 'brush',
+  brushSize: 15,
+  showMaskOverlay: true,
+  pipelineSteps: [],
+  selectedPipelineIndex: -1,
+  compareMode: false,
+  // Viewer pan/zoom
+  zoom: 1.0,
+  panX: 0,
+  panY: 0,
+  isPanning: false,
+  panStartX: 0,
+  panStartY: 0,
+  panStartPanX: 0,
+  panStartPanY: 0,
+};
+
+/* OPERATION_DEFINITIONS mirrored client-side for Advanced panel param rendering */
+const OP_DEFS = {
+  histogram:          { label: 'Histogram Equalization', params: [] },
+  clahe:              { label: 'CLAHE', params: [
+    { name:'clip_limit', label:'Clip Limit', kind:'float', default:2.0, min:0.1, max:100, step:0.1 },
+    { name:'tile_width',  label:'Tile Width',  kind:'int', default:8,  min:1, max:256, step:1 },
+    { name:'tile_height', label:'Tile Height', kind:'int', default:8,  min:1, max:256, step:1 },
+  ]},
+  white_balance:      { label: 'Auto White Balance', params: [] },
+  normalize:          { label: 'Normalize', params: [
+    { name:'new_min', label:'New Minimum', kind:'int', default:0,   min:0, max:254, step:1 },
+    { name:'new_max', label:'New Maximum', kind:'int', default:255, min:1, max:255, step:1 },
+  ]},
+  resize:             { label: 'Resize', params: [
+    { name:'width',  label:'Width',  kind:'int', default:1000, min:1, max:100000, step:1 },
+    { name:'height', label:'Height', kind:'int', default:1000, min:1, max:100000, step:1 },
+  ]},
+  gaussian:           { label: 'Gaussian Denoise', params: [
+    { name:'kernel_size', label:'Kernel Size', kind:'int',   default:5,   min:3, max:99, step:2 },
+    { name:'sigma',       label:'Sigma',       kind:'float', default:0.0, min:0, max:1000, step:0.1 },
+  ]},
+  median:             { label: 'Median Denoise', params: [
+    { name:'kernel_size', label:'Kernel Size', kind:'int', default:3, min:3, max:99, step:2 },
+  ]},
+  bilateral:          { label: 'Bilateral Denoise', params: [
+    { name:'diameter',    label:'Diameter',    kind:'int',   default:9,  min:1, max:99, step:1 },
+    { name:'sigma_color', label:'Color Sigma', kind:'float', default:75, min:0.1, max:1000, step:0.1 },
+    { name:'sigma_space', label:'Space Sigma', kind:'float', default:75, min:0.1, max:1000, step:0.1 },
+  ]},
+  non_local_means:    { label: 'Non-Local Means', params: [
+    { name:'h',                    label:'Strength',       kind:'float', default:10, min:0.1, max:1000, step:0.1 },
+    { name:'h_color',              label:'Color Strength', kind:'float', default:10, min:0.1, max:1000, step:0.1 },
+    { name:'template_window_size', label:'Template Win',  kind:'int',   default:7,  min:3, max:31, step:2 },
+    { name:'search_window_size',   label:'Search Win',    kind:'int',   default:21, min:3, max:51, step:2 },
+  ]},
+  unsharp:            { label: 'Unsharp Mask', params: [
+    { name:'radius',    label:'Radius',    kind:'float', default:1,  min:0.1, max:100, step:0.1 },
+    { name:'amount',    label:'Amount',    kind:'float', default:1,  min:0.1, max:10,  step:0.1 },
+    { name:'threshold', label:'Threshold', kind:'int',   default:0,  min:0,   max:255, step:1   },
+  ]},
+  wiener:             { label: 'Wiener Deconvolution', params: [
+    { name:'psf_length', label:'PSF Length', kind:'int',   default:9,    min:3,    max:31,  step:2    },
+    { name:'psf_angle',  label:'PSF Angle',  kind:'float', default:0,    min:-360, max:360, step:0.1  },
+    { name:'balance',    label:'Balance',    kind:'float', default:0.01, min:0.001,max:1,   step:0.001},
+  ]},
+  lucy_richardson:    { label: 'Lucy–Richardson', params: [
+    { name:'psf_length', label:'PSF Length', kind:'int',   default:9,  min:3,    max:31,  step:2   },
+    { name:'psf_angle',  label:'PSF Angle',  kind:'float', default:0,  min:-360, max:360, step:0.1 },
+    { name:'iterations', label:'Iterations', kind:'int',   default:10, min:1,    max:100, step:1   },
+  ]},
+  inpaint:            { label: 'Inpainting (Repair Mask)', params: [
+    { name:'method', label:'Method', kind:'choice', default:'telea',
+      choices:[['Telea','telea'],['Navier-Stokes','navier_stokes']] },
+    { name:'radius', label:'Radius', kind:'float', default:3.0, min:0.1, max:100, step:0.5 },
+  ]},
+  sharpen:            { label: 'Sharpen', params: [
+    { name:'amount', label:'Amount', kind:'float', default:1, min:0, max:3, step:0.1 },
+  ]},
+  edge_enhancement:   { label: 'Edge Enhancement', params: [
+    { name:'strength', label:'Strength', kind:'float', default:0.5, min:0, max:3, step:0.1 },
+  ]},
+  brightness:         { label: 'Brightness', params: [
+    { name:'value', label:'Value', kind:'int', default:0, min:-255, max:255, step:1 },
+  ]},
+  contrast:           { label: 'Contrast', params: [
+    { name:'factor', label:'Factor', kind:'float', default:1, min:0.1, max:3, step:0.1 },
+  ]},
+  gamma:              { label: 'Gamma', params: [
+    { name:'gamma', label:'Gamma', kind:'float', default:1, min:0.1, max:5, step:0.1 },
+  ]},
+  color_correction:   { label: 'Color Correction', params: [
+    { name:'blue_gain',  label:'Blue Gain',  kind:'float', default:1, min:0.1, max:3, step:0.05 },
+    { name:'green_gain', label:'Green Gain', kind:'float', default:1, min:0.1, max:3, step:0.05 },
+    { name:'red_gain',   label:'Red Gain',   kind:'float', default:1, min:0.1, max:3, step:0.05 },
+  ]},
+  adaptive_threshold: { label: 'Adaptive Threshold', params: [
+    { name:'block_size', label:'Block Size', kind:'int',    default:11, min:3, max:255, step:2 },
+    { name:'constant',   label:'Constant',   kind:'float',  default:2,  min:-255, max:255, step:0.1 },
+    { name:'method',     label:'Method',     kind:'choice', default:'gaussian',
+      choices:[['Gaussian','gaussian'],['Mean','mean']] },
+  ]},
+  black_white:        { label: 'B&W', params: [] },
+  vintage:            { label: 'Vintage', params: [
+    { name:'intensity', label:'Intensity', kind:'float', default:0.35, min:0, max:1, step:0.05 },
+  ]},
+};
+
+/* ============================================================
+   UI HELPERS
+   ============================================================ */
+function setStatus(msg) {
+  document.getElementById('status-msg').textContent = msg;
+  document.getElementById('toolbar-status').textContent = msg;
+}
+
+function setLoading(on, label) {
+  const overlay = document.getElementById('loading-overlay');
+  overlay.style.display = on ? 'flex' : 'none';
+  if (label) document.getElementById('spinner-label').textContent = label;
+}
+
+function numVal(id) {
+  const el = document.getElementById(id);
+  return parseFloat(el.value);
+}
+
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+function toggleParam(id, triggerBtn) {
+  const block = document.getElementById(id);
+  const wasOpen = block.classList.contains('open');
+  const section = triggerBtn.closest('.section-body');
+  section.querySelectorAll('.param-block.open').forEach(b => b.classList.remove('open'));
+  if (!wasOpen) block.classList.add('open');
+}
+
+function closeParam(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+function toggleExportMenu() {
+  document.getElementById('export-menu').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.dropdown-wrap')) {
+    document.getElementById('export-menu').classList.remove('open');
+  }
+});
+
+/* ============================================================
+   BADGE HELPERS
+   ============================================================ */
+function levelBadge(level) {
+  if (!level) return '—';
+  const cls = level.toLowerCase() === 'low' ? 'badge-low'
+            : level.toLowerCase() === 'medium' ? 'badge-medium'
+            : level.toLowerCase() === 'high' ? 'badge-high'
+            : 'badge-none';
+  return `<span class="analysis-badge ${cls}">${level}</span>`;
+}
+
+/* ============================================================
+   UPDATE UI FROM API RESPONSE
+   ============================================================ */
+function updateUI(data) {
+  if (!data) return;
+
+  if (data.image_b64) {
+    state.currentImageSrc = 'data:image/png;base64,' + data.image_b64;
+    state.hasImage = true;
+    state.imageWidth  = data.width  || state.imageWidth;
+    state.imageHeight = data.height || state.imageHeight;
+
+    const img = document.getElementById('viewer-img');
+    img.src = state.currentImageSrc;
+    img.onload = () => applyTransform();
+
+    document.getElementById('viewer-placeholder').style.display = 'none';
+    document.getElementById('img-container').style.display = 'block';
+
+    // If compare mode on, update the right side only
+    if (state.compareMode) {
+      // current image is on the right; before-img holds original
+      document.getElementById('before-img').src = state.originalImageSrc || '';
+    }
+    syncCanvasSize();
+  }
+
+  state.canUndo = !!data.can_undo;
+  state.canRedo = !!data.can_redo;
+  document.getElementById('btn-undo').disabled = !state.canUndo;
+  document.getElementById('btn-redo').disabled = !state.canRedo;
+  document.getElementById('btn-reset').disabled = !state.hasImage;
+  document.getElementById('btn-restore').disabled = !state.hasImage;
+  document.getElementById('btn-export').disabled = !state.hasImage;
+  document.getElementById('btn-compare').disabled = !state.hasImage;
+  document.getElementById('repair-enable').disabled = !state.hasImage;
+
+  document.querySelectorAll('[data-needs-image]').forEach(btn => {
+    btn.disabled = !state.hasImage;
+  });
+
+  if (data.width !== undefined) {
+    updateAnalysisPanel(data);
+  }
+
+  if (data.report !== undefined) {
+    const rp = document.getElementById('restore-report');
+    rp.textContent = data.report;
+    rp.style.display = data.report ? 'block' : 'none';
+  }
+
+  updateZoomInfo();
+}
+
+function updateAnalysisPanel(data) {
+  document.getElementById('analysis-empty').style.display = 'none';
+  document.getElementById('analysis-data').style.display = 'block';
+
+  const w = data.width || state.imageWidth;
+  const h = data.height || state.imageHeight;
+  document.getElementById('an-size').textContent = `${w} × ${h} px`;
+  document.getElementById('an-channels').textContent = data.channels !== undefined ? data.channels : '—';
+  document.getElementById('an-gray').textContent = data.is_grayscale !== undefined ? (data.is_grayscale ? 'Yes' : 'No') : '—';
+
+  if (data.blur_level !== undefined)
+    document.getElementById('an-blur').innerHTML = `${levelBadge(data.blur_level)} <small style="color:#999">${(data.blur_score||0).toFixed(1)}</small>`;
+  if (data.noise_level !== undefined)
+    document.getElementById('an-noise').innerHTML = `${levelBadge(data.noise_level)} <small style="color:#999">${(data.noise_score||0).toFixed(1)}</small>`;
+  if (data.brightness !== undefined)
+    document.getElementById('an-bright').textContent = typeof data.brightness === 'number' ? data.brightness.toFixed(1) : data.brightness;
+  if (data.contrast !== undefined)
+    document.getElementById('an-contrast').textContent = typeof data.contrast === 'number' ? data.contrast.toFixed(1) : data.contrast;
+  if (data.color_cast !== undefined)
+    document.getElementById('an-cast').innerHTML = data.color_cast === 'None'
+      ? `<span class="analysis-badge badge-none">None</span>`
+      : `<span class="analysis-badge badge-high">${data.color_cast}</span>`;
+}
+
+/* ============================================================
+   ZOOM / PAN
+   ============================================================ */
+function applyTransform() {
+  const container = document.getElementById('img-container');
+  container.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  container.style.transformOrigin = 'center center';
+  syncCanvasSize();
+  updateZoomInfo();
+}
+
+function updateZoomInfo() {
+  const zinfo = document.getElementById('viewer-zoom-info');
+  if (!state.hasImage) { zinfo.textContent = 'No image'; return; }
+  zinfo.textContent = `${Math.round(state.zoom * 100)}%  —  ${state.imageWidth} × ${state.imageHeight} px`;
+}
+
+function zoomFit() {
+  if (!state.hasImage) return;
+  const viewer = document.getElementById('image-viewer');
+  const vw = viewer.clientWidth;
+  const vh = viewer.clientHeight;
+  const iw = state.imageWidth;
+  const ih = state.imageHeight;
+  if (!iw || !ih) return;
+  const scaleX = vw / iw;
+  const scaleY = vh / ih;
+  state.zoom = Math.min(scaleX, scaleY, 1.0);
+  state.panX = 0;
+  state.panY = 0;
+  applyTransform();
+}
+
+function zoom100() {
+  state.zoom = 1.0;
+  state.panX = 0;
+  state.panY = 0;
+  applyTransform();
+}
+
+function zoomBy(factor) {
+  state.zoom = Math.max(0.05, Math.min(32, state.zoom * factor));
+  applyTransform();
+}
+
+// Mouse wheel zoom on viewer
+document.getElementById('image-viewer').addEventListener('wheel', e => {
+  if (!state.hasImage) return;
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.1 : 0.9;
+  state.zoom = Math.max(0.05, Math.min(32, state.zoom * factor));
+  applyTransform();
+}, { passive: false });
+
+// Pan with middle-mouse or when not in repair mode
+const viewer = document.getElementById('image-viewer');
+viewer.addEventListener('mousedown', e => {
+  if (!state.hasImage) return;
+  if (e.button === 1 || (e.button === 0 && !state.repairMode)) {
+    state.isPanning = true;
+    state.panStartX = e.clientX;
+    state.panStartY = e.clientY;
+    state.panStartPanX = state.panX;
+    state.panStartPanY = state.panY;
+    viewer.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+});
+document.addEventListener('mousemove', e => {
+  if (!state.isPanning) return;
+  state.panX = state.panStartPanX + (e.clientX - state.panStartX);
+  state.panY = state.panStartPanY + (e.clientY - state.panStartY);
+  applyTransform();
+});
+document.addEventListener('mouseup', e => {
+  if (!state.isPanning) return;
+  state.isPanning = false;
+  viewer.style.cursor = '';
+});
+
+/* ============================================================
+   BEFORE/AFTER COMPARE
+   ============================================================ */
+function toggleCompare() {
+  state.compareMode = !state.compareMode;
+  document.getElementById('btn-compare').classList.toggle('active', state.compareMode);
+  const beforeImg = document.getElementById('before-img');
+  const splitHandle = document.getElementById('split-handle');
+
+  if (state.compareMode) {
+    if (!state.originalImageSrc) {
+      setStatus('No original image stored. Load a fresh image first.');
+      state.compareMode = false;
+      document.getElementById('btn-compare').classList.remove('active');
+      return;
+    }
+    beforeImg.src = state.originalImageSrc;
+    beforeImg.style.display = 'block';
+    splitHandle.style.display = 'block';
+    // Reset split to 50%
+    splitPercent = 50;
+    updateSplit(50);
+  } else {
+    beforeImg.style.display = 'none';
+    splitHandle.style.display = 'none';
+  }
+}
+
+let splitPercent = 50;
+let isDraggingSplit = false;
+
+document.getElementById('split-handle').addEventListener('mousedown', e => {
+  isDraggingSplit = true;
+  e.preventDefault();
+});
+document.addEventListener('mousemove', e => {
+  if (!isDraggingSplit) return;
+  const container = document.getElementById('img-container');
+  const rect = container.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+  splitPercent = pct;
+  updateSplit(pct);
+});
+document.addEventListener('mouseup', () => { isDraggingSplit = false; });
+
+function updateSplit(pct) {
+  document.getElementById('before-img').style.clipPath = `inset(0 ${100-pct}% 0 0)`;
+  document.getElementById('split-handle').style.left = pct + '%';
+}
+
+/* ============================================================
+   API CALLS
+   ============================================================ */
+async function applyOperation(endpoint, body) {
+  if (!state.hasImage) return;
+  setLoading(true, `Applying ${friendlyName(endpoint, body)}…`);
+  setStatus('Processing…');
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) { setStatus('Error: ' + (data.error || r.statusText)); return; }
+    updateUI(data);
+    if (data.width === undefined || data.blur_level === undefined) {
+      await fetchAnalysis();
+    }
+    setStatus('Applied: ' + friendlyName(endpoint, body));
+  } catch (e) {
+    setStatus('Error: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function friendlyName(endpoint, body) {
+  const ep = endpoint.split('/').pop();
+  const op = (body && body.operation) ? body.operation : ep;
+  const def = OP_DEFS[op];
+  return def ? def.label : op;
+}
+
+async function fetchAnalysis() {
+  try {
+    const r = await fetch('/api/analyze', { method: 'POST' });
+    if (!r.ok) return;
+    const data = await r.json();
+    updateAnalysisPanel(data);
+  } catch (_) {}
+}
+
+/* Open */
+document.getElementById('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  setLoading(true, 'Opening…');
+  setStatus('Opening…');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/open', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) { setStatus('Error: ' + (data.error || r.statusText)); return; }
+
+    // Store original for compare
+    state.originalImageSrc = 'data:image/png;base64,' + data.image_b64;
+
+    updateUI(data);
+    await fetchAnalysis();
+    setStatus('Opened: ' + file.name);
+
+    document.getElementById('repair-enable').disabled = false;
+
+    // Auto-fit zoom
+    state.panX = 0; state.panY = 0;
+    requestAnimationFrame(zoomFit);
+  } catch (e) {
+    setStatus('Error opening file: ' + e.message);
+  } finally {
+    setLoading(false);
+    e.target.value = '';
+  }
+});
+
+/* Undo / Redo / Reset */
+async function doUndo() {
+  setLoading(true, 'Undoing…'); setStatus('Undoing…');
+  try {
+    const r = await fetch('/api/undo', { method: 'POST' });
+    const d = await r.json();
+    updateUI(d); await fetchAnalysis(); setStatus('Undone');
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+async function doRedo() {
+  setLoading(true, 'Redoing…'); setStatus('Redoing…');
+  try {
+    const r = await fetch('/api/redo', { method: 'POST' });
+    const d = await r.json();
+    updateUI(d); await fetchAnalysis(); setStatus('Redone');
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+async function doReset() {
+  if (!confirm('Reset to original image? All edits will be lost.')) return;
+  setLoading(true, 'Resetting…'); setStatus('Resetting…');
+  try {
+    const r = await fetch('/api/reset', { method: 'POST' });
+    const d = await r.json();
+    updateUI(d); await fetchAnalysis(); setStatus('Reset to original');
+    // Clear compare state
+    if (state.compareMode) toggleCompare();
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+/* Quick Restore */
+async function doQuickRestore() {
+  if (!state.hasImage) return;
+  const strength = document.getElementById('qr-strength').value;  // "Light" / "Medium" / "Strong"
+  const rawStyle = document.getElementById('qr-style').value;      // "Natural" / "Vintage" / "B&W"
+  const mappedStyle = rawStyle === 'B&W' ? 'bw' : rawStyle.toLowerCase();
+  setLoading(true, 'Quick Restoring…'); setStatus('Quick restoring…');
+  try {
+    const r = await fetch('/api/quick_restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strength, style: mappedStyle }),
+    });
+    const data = await r.json();
+    if (!r.ok) { setStatus('Error: '+(data.error||r.statusText)); return; }
+    updateUI(data);
+    if (data.blur_level === undefined) await fetchAnalysis();
+    setStatus('Quick restore complete');
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+/* Export */
+async function exportImage(format) {
+  document.getElementById('export-menu').classList.remove('open');
+  setStatus('Exporting…');
+  try {
+    const r = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format }),
+    });
+    if (!r.ok) { const d = await r.json(); setStatus('Error: '+(d.error||r.statusText)); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'restored.' + format;
+    a.click(); URL.revokeObjectURL(url);
+    setStatus('Exported as ' + format.toUpperCase());
+  } catch (e) { setStatus('Error: '+e.message); }
+}
+
+/* ============================================================
+   RESIZE ASPECT RATIO
+   ============================================================ */
+function onResizeInput(which) {
+  if (!document.getElementById('resize-ar').checked) return;
+  if (!state.hasImage || !state.imageWidth || !state.imageHeight) return;
+  const ratio = state.imageWidth / state.imageHeight;
+  if (which === 'w') {
+    const w = parseInt(document.getElementById('resize-w').value) || 0;
+    document.getElementById('resize-h').value = Math.round(w / ratio) || '';
+  } else {
+    const h = parseInt(document.getElementById('resize-h').value) || 0;
+    document.getElementById('resize-w').value = Math.round(h * ratio) || '';
+  }
+}
+
+/* ============================================================
+   REPAIR PAINTING
+   ============================================================ */
+const repairCanvas = document.getElementById('repair-canvas');
+const ctx = repairCanvas.getContext('2d');
+const brushCursor = document.getElementById('brush-cursor');
+let drawing = false;
+let lastCanvasPoint = null;
+let currentStroke = [];
+let lastMouseMoveEvent = null;
+
+function syncCanvasSize() {
+  const img = document.getElementById('viewer-img');
+  const natW = img.naturalWidth || state.imageWidth;
+  const natH = img.naturalHeight || state.imageHeight;
+  if (!natW || !natH) return;
+
+  if (repairCanvas.width !== natW || repairCanvas.height !== natH) {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = repairCanvas.width;
+    tempCanvas.height = repairCanvas.height;
+    if (tempCanvas.width > 0 && tempCanvas.height > 0) {
+      tempCanvas.getContext('2d').drawImage(repairCanvas, 0, 0);
+    }
+    repairCanvas.width = natW;
+    repairCanvas.height = natH;
+    if (tempCanvas.width > 0 && tempCanvas.height > 0) {
+      ctx.drawImage(tempCanvas, 0, 0, natW, natH);
+    }
+  }
+}
+
+function getCanvasPoint(e) {
+  const rect = repairCanvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return { x: 0, y: 0 };
+  const scaleX = repairCanvas.width / rect.width;
+  const scaleY = repairCanvas.height / rect.height;
+  return {
+    x: Math.round((e.clientX - rect.left) * scaleX),
+    y: Math.round((e.clientY - rect.top) * scaleY),
+  };
+}
+
+function updateBrushCursor(e) {
+  lastMouseMoveEvent = e;
+  if (!state.repairMode || !state.hasImage) {
+    brushCursor.style.display = 'none';
+    return;
+  }
+  const rect = repairCanvas.getBoundingClientRect();
+  if (e.clientX < rect.left || e.clientX > rect.right ||
+      e.clientY < rect.top  || e.clientY > rect.bottom) {
+    brushCursor.style.display = 'none';
+    return;
+  }
+  const scale = rect.width / repairCanvas.width;
+  const screenDiameter = Math.max(4, Math.round(state.brushSize * scale));
+  brushCursor.style.width = screenDiameter + 'px';
+  brushCursor.style.height = screenDiameter + 'px';
+  brushCursor.style.left = e.clientX + 'px';
+  brushCursor.style.top = e.clientY + 'px';
+  brushCursor.style.display = 'block';
+
+  if (state.repairTool === 'eraser') {
+    brushCursor.style.borderColor = '#ffcc00';
+    brushCursor.style.borderStyle = 'dashed';
+  } else {
+    brushCursor.style.borderColor = '#ffffff';
+    brushCursor.style.borderStyle = 'solid';
+  }
+}
+
+function onBrushSizeChange(val) {
+  state.brushSize = Math.max(1, parseInt(val) || 15);
+  if (lastMouseMoveEvent) {
+    updateBrushCursor(lastMouseMoveEvent);
+  }
+}
+
+function toggleRepairMode(enabled) {
+  state.repairMode = enabled;
+  repairCanvas.style.display = enabled ? 'block' : 'none';
+  if (!enabled) {
+    brushCursor.style.display = 'none';
+  }
+
+  const repairControls = ['repair-brush','repair-eraser','brush-size','mask-overlay-chk','btn-undo-mask','btn-redo-mask','btn-clear-mask','inpaint-method','repair-radius','btn-apply-repair'];
+  repairControls.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  });
+
+  if (enabled) {
+    syncCanvasSize();
+    repairCanvas.style.visibility = state.showMaskOverlay ? 'visible' : 'hidden';
+  }
+}
+
+function setRepairTool(tool) {
+  state.repairTool = tool;
+  document.getElementById('repair-brush').classList.toggle('active', tool === 'brush');
+  document.getElementById('repair-eraser').classList.toggle('active', tool === 'eraser');
+  if (lastMouseMoveEvent) updateBrushCursor(lastMouseMoveEvent);
+}
+
+function toggleMaskOverlay(show) {
+  state.showMaskOverlay = show;
+  repairCanvas.style.visibility = show ? 'visible' : 'hidden';
+}
+
+function drawDot(pt) {
+  ctx.save();
+  if (state.repairTool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000000';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#ff2222';
+  }
+  ctx.beginPath();
+  ctx.arc(pt.x, pt.y, state.brushSize / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLineSegment(from, to) {
+  ctx.save();
+  if (state.repairTool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = '#000000';
+    ctx.fillStyle = '#000000';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = '#ff2222';
+    ctx.fillStyle = '#ff2222';
+  }
+  ctx.lineWidth = state.brushSize;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(to.x, to.y, state.brushSize / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+repairCanvas.addEventListener('pointerdown', e => {
+  if (!state.repairMode || !state.hasImage) return;
+  if (e.button !== 0) return;
+
+  try {
+    repairCanvas.setPointerCapture(e.pointerId);
+  } catch (_) {}
+
+  drawing = true;
+  const pt = getCanvasPoint(e);
+  lastCanvasPoint = pt;
+  currentStroke = [pt];
+  drawDot(pt);
+
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+repairCanvas.addEventListener('pointermove', e => {
+  updateBrushCursor(e);
+  if (!drawing || !state.repairMode) return;
+
+  const pt = getCanvasPoint(e);
+  if (!lastCanvasPoint) {
+    lastCanvasPoint = pt;
+    return;
+  }
+
+  drawLineSegment(lastCanvasPoint, pt);
+  currentStroke.push(pt);
+  lastCanvasPoint = pt;
+});
+
+repairCanvas.addEventListener('pointerup', async e => {
+  if (!drawing) return;
+  drawing = false;
+  try {
+    repairCanvas.releasePointerCapture(e.pointerId);
+  } catch (_) {}
+
+  const pointsToSend = currentStroke.map(p => [p.x, p.y]);
+  currentStroke = [];
+  lastCanvasPoint = null;
+
+  if (pointsToSend.length > 0) {
+    await sendStroke(pointsToSend);
+  }
+});
+
+repairCanvas.addEventListener('pointercancel', e => {
+  drawing = false;
+  currentStroke = [];
+  lastCanvasPoint = null;
+});
+
+repairCanvas.addEventListener('pointerleave', e => {
+  if (!drawing) {
+    brushCursor.style.display = 'none';
+  }
+});
+
+document.getElementById('image-viewer').addEventListener('pointerleave', () => {
+  brushCursor.style.display = 'none';
+});
+
+async function sendStroke(imgPoints) {
+  if (!imgPoints || imgPoints.length === 0) return;
+  try {
+    const r = await fetch('/api/repair/mask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'paint',
+        points: imgPoints,
+        brush_size: state.brushSize,
+        erase: state.repairTool === 'eraser',
+      }),
+    });
+    const data = await r.json();
+    if (data.mask_b64) {
+      renderMaskToCanvas(data.mask_b64);
+    }
+  } catch (err) {
+    console.error('sendStroke error:', err);
+  }
+}
+
+function renderMaskToCanvas(maskB64) {
+  if (!maskB64) {
+    ctx.clearRect(0, 0, repairCanvas.width, repairCanvas.height);
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    if (drawing) return;
+    ctx.clearRect(0, 0, repairCanvas.width, repairCanvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(img, 0, 0, repairCanvas.width, repairCanvas.height);
+  };
+  img.src = 'data:image/png;base64,' + maskB64;
+}
+
+async function doMaskAction(action) {
+  try {
+    const r = await fetch('/api/repair/mask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await r.json();
+    if (action === 'clear') {
+      ctx.clearRect(0, 0, repairCanvas.width, repairCanvas.height);
+    } else if (data.mask_b64) {
+      renderMaskToCanvas(data.mask_b64);
+    }
+  } catch (_) {}
+}
+
+async function applyRepair() {
+  if (!state.hasImage) return;
+  const method = document.getElementById('inpaint-method').value;
+  const radius = parseFloat(document.getElementById('repair-radius').value);
+  setLoading(true, 'Applying repair…'); setStatus('Applying repair…');
+  try {
+    const r = await fetch('/api/repair/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, radius }),
+    });
+    const data = await r.json();
+    if (!r.ok) { setStatus('Error: '+(data.error||r.statusText)); return; }
+    updateUI(data);
+    ctx.clearRect(0, 0, repairCanvas.width, repairCanvas.height);
+    await fetchAnalysis();
+    setStatus('Repair applied');
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+window.addEventListener('resize', () => {
+  if (state.hasImage) {
+    requestAnimationFrame(() => { syncCanvasSize(); });
+  }
+});
+
+/* ============================================================
+   ADVANCED PIPELINE
+   ============================================================ */
+function advAddStep() {
+  const op = document.getElementById('adv-op-browser').value;
+  const def = OP_DEFS[op];
+  if (!def) return;
+  const params = {};
+  def.params.forEach(p => { params[p.name] = p.default; });
+  state.pipelineSteps.push({ operation: op, label: def.label, parameters: params });
+  state.selectedPipelineIndex = state.pipelineSteps.length - 1;
+  renderPipelineList();
+  renderAdvParams();
+}
+
+function advRemoveStep() {
+  if (state.selectedPipelineIndex < 0) return;
+  state.pipelineSteps.splice(state.selectedPipelineIndex, 1);
+  state.selectedPipelineIndex = Math.min(state.selectedPipelineIndex, state.pipelineSteps.length - 1);
+  renderPipelineList();
+  renderAdvParams();
+}
+
+function advMoveStep(offset) {
+  const idx = state.selectedPipelineIndex;
+  const target = idx + offset;
+  if (idx < 0 || target < 0 || target >= state.pipelineSteps.length) return;
+  [state.pipelineSteps[idx], state.pipelineSteps[target]] = [state.pipelineSteps[target], state.pipelineSteps[idx]];
+  state.selectedPipelineIndex = target;
+  renderPipelineList();
+}
+
+function advClearPipeline() {
+  state.pipelineSteps = [];
+  state.selectedPipelineIndex = -1;
+  renderPipelineList();
+  renderAdvParams();
+}
+
+function renderPipelineList() {
+  const ol = document.getElementById('pipeline-list');
+  ol.innerHTML = '';
+  state.pipelineSteps.forEach((step, i) => {
+    const li = document.createElement('li');
+    li.textContent = step.label;
+    li.className = i === state.selectedPipelineIndex ? 'selected' : '';
+    li.onclick = () => {
+      state.selectedPipelineIndex = i;
+      renderPipelineList();
+      renderAdvParams();
+    };
+    ol.appendChild(li);
+  });
+  document.getElementById('btn-apply-pipeline').disabled = !state.hasImage || state.pipelineSteps.length === 0;
+}
+
+function renderAdvParams() {
+  const form = document.getElementById('adv-params-form');
+  form.innerHTML = '';
+  const idx = state.selectedPipelineIndex;
+  if (idx < 0 || idx >= state.pipelineSteps.length) return;
+
+  const step = state.pipelineSteps[idx];
+  const def = OP_DEFS[step.operation];
+  if (!def || def.params.length === 0) {
+    form.innerHTML = '<span style="font-size:12px;color:#aaa">No parameters.</span>';
+    return;
+  }
+
+  def.params.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const lbl = document.createElement('label');
+    lbl.textContent = p.label;
+    row.appendChild(lbl);
+
+    let input;
+    if (p.kind === 'choice') {
+      input = document.createElement('select');
+      input.id = 'adv-param-' + p.name;
+      p.choices.forEach(([clabel, cval]) => {
+        const opt = document.createElement('option');
+        opt.value = cval; opt.textContent = clabel;
+        if (cval === step.parameters[p.name]) opt.selected = true;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.id = 'adv-param-' + p.name;
+      input.value = step.parameters[p.name] !== undefined ? step.parameters[p.name] : p.default;
+      if (p.min !== undefined) input.min = p.min;
+      if (p.max !== undefined) input.max = p.max;
+      if (p.step !== undefined) input.step = p.step;
+    }
+    row.appendChild(input);
+    form.appendChild(row);
+  });
+}
+
+function advUpdateParams() {
+  const idx = state.selectedPipelineIndex;
+  if (idx < 0 || idx >= state.pipelineSteps.length) return;
+  const step = state.pipelineSteps[idx];
+  const def = OP_DEFS[step.operation];
+  if (!def) return;
+
+  def.params.forEach(p => {
+    const el = document.getElementById('adv-param-' + p.name);
+    if (!el) return;
+    if (p.kind === 'choice') {
+      step.parameters[p.name] = el.value;
+    } else if (p.kind === 'int') {
+      step.parameters[p.name] = parseInt(el.value);
+    } else {
+      step.parameters[p.name] = parseFloat(el.value);
+    }
+  });
+  renderPipelineList();
+  setStatus('Parameters updated');
+}
+
+async function advApplyPipeline() {
+  if (!state.hasImage || state.pipelineSteps.length === 0) return;
+  const steps = state.pipelineSteps.map(s => ({ operation: s.operation, parameters: s.parameters }));
+  setLoading(true, `Running ${steps.length}-step pipeline…`); setStatus('Running pipeline…');
+  try {
+    const r = await fetch('/api/advanced', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ steps }),
+    });
+    const data = await r.json();
+    if (!r.ok) { setStatus('Error: '+(data.error||r.statusText)); return; }
+    updateUI(data);
+    await fetchAnalysis();
+    setStatus('Pipeline applied (' + steps.length + ' steps)');
+  } catch (e) { setStatus('Error: '+e.message); } finally { setLoading(false); }
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+document.getElementById('resize-w').value = '';
+document.getElementById('resize-h').value = '';
+</script>
+</body>
+</html>
